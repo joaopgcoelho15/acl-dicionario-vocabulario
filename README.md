@@ -1,7 +1,5 @@
 # ACL — plataforma de arquitetura de referência
 
-Nova implementação local e independente. A pasta `ACL_Plataforma_PoC` e o
-serviço público atual não são alterados.
 
 ## Cadeia principal
 
