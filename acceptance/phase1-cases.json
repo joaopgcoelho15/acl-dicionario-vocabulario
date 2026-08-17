@@ -1,0 +1,23 @@
+{
+  "version": "phase1-2026-08-04",
+  "approval_status": "proposto_para_validacao_editorial",
+  "search_cases": [
+    {"id": "S01", "description": "Lema exato no DLP", "query": "abacate", "expected_lemma": "abacate", "resource": "dictionary"},
+    {"id": "S02", "description": "Lema homógrafo", "query": "cavalo", "expected_lemma": "cavalo", "minimum_hits": 2},
+    {"id": "S03", "description": "Início de palavra", "query": "abacat", "expected_lemma_prefix": "abacat"},
+    {"id": "S04", "description": "Forma flexionada", "query": "cavalos", "expected_lemma": "cavalo"},
+    {"id": "S05", "description": "Pequeno erro de escrita", "query": "abaccate", "expected_lemma": "abacate"},
+    {"id": "S06", "description": "Domínio nativo do DLP", "query": "cavalo", "expected_domain": "Zool.", "resource": "dictionary"},
+    {"id": "S07", "description": "Pesquisa apenas no Vocabulário", "query": "abacateira", "resource": "vocabulary", "minimum_hits": 1},
+    {"id": "S08", "description": "Pesquisa sem resultado", "query": "zzzzpalavrainexistentezzzz", "maximum_hits": 0}
+  ],
+  "editorial_cases": [
+    {"id": "E01", "description": "Importar DLP e VOLP preservando identificadores e XML"},
+    {"id": "E02", "description": "Editar lema, forma, classe, estado, definição, marca e remissão"},
+    {"id": "E03", "description": "Submeter para revisão e validar com utilizadores distintos"},
+    {"id": "E04", "description": "Detetar erro impeditivo e impedir preparação da candidata"},
+    {"id": "E05", "description": "Comparar o XML editado com a revisão e repor a versão anterior"},
+    {"id": "E06", "description": "Preparar, aprovar e publicar uma release identificada"},
+    {"id": "E07", "description": "Reverter os dados e os índices para a release anterior"}
+  ]
+}

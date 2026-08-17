@@ -1,0 +1,36 @@
+{
+  "searchableAttributes": [
+    "lemma",
+    "forms.value",
+    "variants",
+    "notes_text"
+  ],
+  "filterableAttributes": [
+    "resource",
+    "source_id",
+    "sense_ids",
+    "lemma_normalized",
+    "grammatical_categories",
+    "domains",
+    "status",
+    "publication_version"
+  ],
+  "sortableAttributes": ["lemma_normalized"],
+  "displayedAttributes": ["*"],
+  "pagination": {"maxTotalHits": 300000},
+  "faceting": {"maxValuesPerFacet": 500},
+  "rankingRules": [
+    "words",
+    "typo",
+    "proximity",
+    "attribute",
+    "homograph_order:asc",
+    "sort",
+    "exactness"
+  ],
+  "typoTolerance": {
+    "enabled": true,
+    "minWordSizeForTypos": {"oneTypo": 5, "twoTypos": 9},
+    "disableOnAttributes": ["id", "source_id"]
+  }
+}

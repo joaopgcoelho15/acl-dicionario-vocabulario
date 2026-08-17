@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="/dicionario-vocabulario/">
+  <meta name="acl-base-path" content="/dicionario-vocabulario">
+  <meta name="description" content="Dados e diagnóstico editorial do Dicionário e do Vocabulário da Academia das Ciências de Lisboa.">
+  <title>Dados e diagnóstico — Dicionário e Vocabulário</title>
+  <link rel="icon" href="assets/acl-logo.png">
+  <link rel="stylesheet" href="assets/styles-v2.css">
+  <script src="assets/stats.js" defer></script>
+</head>
+<body class="stats-body" data-dashboard-view="data">
+  <a class="skip-link" href="#conteudo">Saltar para o conteúdo</a>
+
+  <div class="institution-bar">
+    <div class="shell institution-bar__inner">
+      <a href="mailto:illlp@acad-ciencias.pt">illlp@acad-ciencias.pt</a>
+      <span>Instituto de Lexicologia e Lexicografia da Língua Portuguesa</span>
+    </div>
+  </div>
+
+  <header class="site-header stats-header">
+    <div class="shell site-header__inner">
+      <div class="brand">
+        <a class="brand__logo-link" href="https://www.acad-ciencias.pt/"
+           aria-label="Academia das Ciências de Lisboa" rel="noreferrer">
+          <img class="brand__logo" src="assets/acl-logo.png"
+               alt="Símbolo da Academia das Ciências de Lisboa">
+        </a>
+        <a class="brand__title" href="./">
+          <strong>Dicionário e Vocabulário</strong>
+          <small>Academia das Ciências de Lisboa</small>
+        </a>
+      </div>
+      <nav aria-label="Navegação dos dados">
+        <a href="./">Pesquisa</a>
+        <a href="dados" aria-current="page">Dados</a>
+        <a href="estatisticas">Estatísticas</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="conteudo" class="stats-main">
+    <section class="stats-intro">
+      <div class="shell">
+        <p class="eyebrow">Corpus lexical</p>
+        <h1>Dados e diagnóstico</h1>
+        <p>Explore a composição, os estados editoriais e os indicadores de
+          qualidade do Dicionário e do Vocabulário.</p>
+        <div class="stats-toolbar">
+          <button id="refresh-stats" type="button">Atualizar dados</button>
+          <span id="stats-generated"></span>
+        </div>
+      </div>
+    </section>
+
+    <div class="shell stats-content">
+      <div id="stats-loading" class="stats-loading">A calcular dados…</div>
+      <div id="stats-error" class="stats-error" hidden></div>
+
+      <section id="source-section" hidden>
+        <header class="stats-section-heading">
+          <p class="eyebrow">Comparação direta</p>
+          <h2>Entradas por fonte ACL</h2>
+        </header>
+        <div class="stats-grid source-comparison">
+          <article class="stats-card">
+            <h3><a class="stats-link" href="?source=DLP">Dicionário</a></h3>
+            <div id="dlp-source-data"></div>
+          </article>
+          <article class="stats-card">
+            <h3><a class="stats-link" href="?source=VOCABULARIO">Vocabulário</a></h3>
+            <div id="vocabulary-source-data"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="corpus-section" hidden>
+        <header class="stats-section-heading">
+          <p class="eyebrow">Dados lexicais</p>
+          <h2>Retrato do corpus</h2>
+        </header>
+        <div id="corpus-kpis" class="stats-kpis"></div>
+        <div class="stats-grid">
+          <article class="stats-card">
+            <h3>Coleções</h3>
+            <div id="collection-chart"></div>
+          </article>
+          <article class="stats-card">
+            <h3>Publicação</h3>
+            <div id="publication-chart"></div>
+          </article>
+        </div>
+        <article class="stats-card stats-card--wide">
+          <h3>Importações de fontes externas</h3>
+          <div id="external-source-table" class="stats-table-wrap"></div>
+        </article>
+      </section>
+
+      <section id="editorial-section" hidden>
+        <header class="stats-section-heading">
+          <p class="eyebrow">Diagnóstico editorial</p>
+          <h2>Estados e qualidade</h2>
+        </header>
+        <div id="quality-kpis" class="stats-kpis stats-kpis--quality"></div>
+        <div class="stats-grid">
+          <article class="stats-card">
+            <h3>Estados no XML</h3>
+            <div id="status-chart"></div>
+          </article>
+          <article class="stats-card">
+            <h3>Workflow</h3>
+            <div id="workflow-chart"></div>
+          </article>
+        </div>
+        <article class="stats-card stats-card--wide">
+          <h3>Estados por coleção</h3>
+          <div id="collection-status-table" class="stats-table-wrap"></div>
+        </article>
+        <article class="stats-card stats-card--wide">
+          <h3>Alertas encontrados</h3>
+          <div id="anomaly-table" class="stats-table-wrap"></div>
+        </article>
+      </section>
+
+      <section id="facets-section" hidden>
+        <header class="stats-section-heading">
+          <p class="eyebrow">Vocabulários controlados</p>
+          <h2>Classes e domínios</h2>
+        </header>
+        <div class="stats-grid">
+          <article class="stats-card stats-card--table">
+            <div class="stats-card__heading">
+              <h3>Classes gramaticais</h3>
+              <input type="search" data-table-filter="grammar-table"
+                     placeholder="Filtrar classes">
+            </div>
+            <div id="grammar-table" class="stats-table-wrap"></div>
+          </article>
+          <article class="stats-card stats-card--table">
+            <div class="stats-card__heading">
+              <h3>Domínios — ordem alfabética</h3>
+              <input type="search" data-table-filter="domain-table"
+                     placeholder="Filtrar domínios">
+            </div>
+            <div id="domain-table" class="stats-table-wrap"></div>
+          </article>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell site-footer__grid">
+      <div>
+        <img class="footer__logo" src="assets/acl-logo.png" alt="">
+        <p>Academia das Ciências de Lisboa<br>
+          Instituto de Lexicologia e Lexicografia da Língua Portuguesa</p>
+      </div>
+      <p>Dados experimentais para apoio à investigação e ao trabalho editorial.</p>
+    </div>
+  </footer>
+</body>
+</html>

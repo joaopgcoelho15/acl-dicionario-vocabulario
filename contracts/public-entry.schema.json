@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acl.pt/contracts/public-entry/v1",
+  "title": "Entrada pública ACL",
+  "type": "object",
+  "required": [
+    "id",
+    "source_id",
+    "resource",
+    "lemma",
+    "lemma_normalized",
+    "forms",
+    "grammatical_categories",
+    "domains",
+    "senses",
+    "relations",
+    "images",
+    "provenance",
+    "publication_version"
+  ],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "resource": {"enum": ["dictionary", "vocabulary"]},
+    "lemma": {"type": "string"},
+    "lemma_normalized": {"type": "string"},
+    "forms": {"type": "array", "items": {"type": "object"}},
+    "variants": {"type": "array", "items": {"type": "string"}},
+    "grammatical_categories": {"type": "array", "items": {"type": "string"}},
+    "domains": {"type": "array", "items": {"type": "string"}},
+    "status": {"type": ["string", "null"]},
+    "definitions_text": {"type": "string"},
+    "glosses": {"type": "array", "items": {"type": "string"}},
+    "glosses_text": {"type": "string"},
+    "examples_text": {"type": "string"},
+    "etymology_text": {"type": "string"},
+    "notes_text": {"type": "string"},
+    "senses": {"type": "array", "items": {"type": "object"}},
+    "sense_ids": {"type": "array", "items": {"type": "string"}},
+    "relations": {"type": "array", "items": {"type": "object"}},
+    "images": {"type": "array", "items": {"type": "object"}},
+    "provenance": {"type": "array", "items": {"type": "object"}},
+    "publication_version": {"type": "string", "minLength": 1},
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    ,"source_xml": {"type": "string"}
+  },
+  "additionalProperties": true
+}

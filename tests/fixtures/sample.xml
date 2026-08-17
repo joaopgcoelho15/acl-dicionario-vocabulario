@@ -1,0 +1,29 @@
+<dic>
+<entry xmlns="http://www.tei-c.org/ns/1.0"
+       xmlns:dacl="http://dacl.zbr.pt/annotations"
+       xml:id="DLP-cavalo_1-teste" xml:lang="pt">
+  <dacl:meta status="edited"/>
+  <form><orth>cavalo</orth></form>
+  <gramGrp>n. m.</gramGrp>
+  <sense xml:id="DLP-cavalo_1-teste-1" n="1">
+    <usg type="dom">Zool.</usg>
+    <def>mamífero doméstico</def>
+    <cit type="example"><quote>O cavalo correu.</quote></cit>
+    <xr type="synonymy"><ref type="entry">equino</ref></xr>
+    <sense xml:id="DLP-cavalo_1-teste-2" n="1.1">
+      <gloss>peça de xadrez</gloss>
+    </sense>
+  </sense>
+</entry>
+<entry xmlns="http://www.tei-c.org/ns/1.0"
+       xmlns:dacl="http://dacl.zbr.pt/annotations"
+       xml:id="VOLP-exemplo_1-teste" xml:lang="pt" volp="only">
+  <form><orth>exemplo</orth><orth>exemplos</orth></form>
+  <gramGrp>n. m.</gramGrp>
+  <gloss>texto introdutório:
+    <sense xml:id="VOLP-exemplo_1-teste-1" n="1">
+      <def>sentido incluído dentro de gloss</def>
+    </sense>
+  </gloss>
+</entry>
+</dic>

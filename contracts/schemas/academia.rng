@@ -1,0 +1,34 @@
+<grammar xmlns="http://relaxng.org/ns/structure/1.0" xmlns:a="http://relaxng.org/ns/compatibility/annotations/1.0" xmlns:sch="http://purl.oclc.org/dsdl/schematron" datatypeLibrary="http://www.w3.org/2001/XMLSchema-datatypes" ns="http://www.tei-c.org/ns/1.0">
+
+    <define name="entry" combine="choice">
+        <choice>
+            <element name="meta" ns="http://dacl.zbr.pt/annotations">
+                <empty/>
+                <attribute name="status">
+                    <choice>
+                        <value>imported</value>
+                        <value>edited</value>
+                        <value>new</value>
+                        <value>reviewed</value>
+                        <value>validated</value>
+                    </choice>
+                </attribute>
+            </element>
+        </choice>
+    </define>
+    
+
+    <!--
+      Extensão institucional: @volp="only" é preservado no XML e aceite
+      pelo adaptador de validação em acl_reference/validation.py. O esquema
+      TEI Lex-0 incluído abaixo mantém-se inalterado como referência externa.
+    -->
+    <!-- https://raw.githubusercontent.com/DARIAH-ERIC/lexicalresources/master/Schemas/TEILex0/out/ -->
+    <include href="TEILex0.rng">
+        <start>
+            <choice>
+                <ref name="entry"/>
+            </choice>
+        </start>
+    </include>
+</grammar>

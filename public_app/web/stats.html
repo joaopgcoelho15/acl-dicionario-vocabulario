@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="/dicionario-vocabulario/">
+  <meta name="acl-base-path" content="/dicionario-vocabulario">
+  <meta name="description" content="Estatísticas experimentais do Dicionário e do Vocabulário da Academia das Ciências de Lisboa.">
+  <title>Estatísticas — Dicionário e Vocabulário</title>
+  <link rel="icon" href="assets/acl-logo.png">
+  <link rel="stylesheet" href="assets/styles-v2.css">
+  <script src="assets/stats.js" defer></script>
+</head>
+<body class="stats-body" data-dashboard-view="usage">
+  <a class="skip-link" href="#conteudo">Saltar para o conteúdo</a>
+
+  <div class="institution-bar">
+    <div class="shell institution-bar__inner">
+      <a href="mailto:illlp@acad-ciencias.pt">illlp@acad-ciencias.pt</a>
+      <span>Instituto de Lexicologia e Lexicografia da Língua Portuguesa</span>
+    </div>
+  </div>
+
+  <header class="site-header stats-header">
+    <div class="shell site-header__inner">
+      <div class="brand">
+        <a class="brand__logo-link" href="https://www.acad-ciencias.pt/"
+           aria-label="Academia das Ciências de Lisboa" rel="noreferrer">
+          <img class="brand__logo" src="assets/acl-logo.png"
+               alt="Símbolo da Academia das Ciências de Lisboa">
+        </a>
+        <a class="brand__title" href="./">
+          <strong>Dicionário e Vocabulário</strong>
+          <small>Academia das Ciências de Lisboa</small>
+        </a>
+      </div>
+      <nav aria-label="Navegação das estatísticas">
+        <a href="./">Pesquisa</a>
+        <a href="dados">Dados</a>
+        <a href="estatisticas" aria-current="page">Estatísticas</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="conteudo" class="stats-main">
+    <section class="stats-intro">
+      <div class="shell">
+        <p class="eyebrow">Utilização</p>
+        <h1>Estatísticas de utilização</h1>
+        <p>Explore os acessos, pesquisas e tendências de utilização da plataforma.</p>
+        <div class="stats-toolbar">
+          <label for="usage-period">Período de utilização</label>
+          <select id="usage-period">
+            <option value="7">Últimos 7 dias</option>
+            <option value="30" selected>Últimos 30 dias</option>
+            <option value="90">Últimos 90 dias</option>
+            <option value="365">Último ano</option>
+            <option value="0">Todo o histórico</option>
+          </select>
+          <button id="refresh-stats" type="button">Atualizar</button>
+          <span id="stats-generated"></span>
+        </div>
+      </div>
+    </section>
+
+    <div class="shell stats-content">
+      <div id="stats-loading" class="stats-loading">A calcular estatísticas…</div>
+      <div id="stats-error" class="stats-error" hidden></div>
+
+      <section id="usage-section" hidden>
+        <header class="stats-section-heading">
+          <p class="eyebrow">Utilização</p>
+          <h2>Acessos e tendências</h2>
+        </header>
+        <p id="usage-privacy" class="stats-privacy"></p>
+        <div id="usage-kpis" class="stats-kpis"></div>
+        <article class="stats-card stats-card--wide">
+          <h3>Evolução diária</h3>
+          <div id="daily-chart" class="timeline-chart"></div>
+        </article>
+        <div class="stats-grid">
+          <article class="stats-card">
+            <h3>Pesquisas mais frequentes</h3>
+            <div id="search-chart"></div>
+          </article>
+          <article class="stats-card">
+            <h3>Tipos de cliente</h3>
+            <div id="agent-chart"></div>
+          </article>
+          <article class="stats-card">
+            <h3>Rotas mais consultadas</h3>
+            <div id="route-chart"></div>
+          </article>
+          <article class="stats-card">
+            <h3>Códigos HTTP</h3>
+            <div id="http-chart"></div>
+          </article>
+          <article class="stats-card">
+            <h3>Origem dos acessos</h3>
+            <div id="referrer-chart"></div>
+          </article>
+          <article class="stats-card">
+            <h3>Endereços IP</h3>
+            <div id="ip-chart"></div>
+          </article>
+          <article class="stats-card">
+            <h3>Distribuição horária (UTC)</h3>
+            <div id="hour-chart"></div>
+          </article>
+        </div>
+        <article class="stats-card stats-card--wide">
+          <h3>Eventos recentes</h3>
+          <div id="recent-table" class="stats-table-wrap"></div>
+        </article>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell site-footer__grid">
+      <div>
+        <img class="footer__logo" src="assets/acl-logo.png" alt="">
+        <p>Academia das Ciências de Lisboa<br>
+          Instituto de Lexicologia e Lexicografia da Língua Portuguesa</p>
+      </div>
+      <p>Dashboard experimental para apoio à investigação e ao trabalho editorial.</p>
+    </div>
+  </footer>
+</body>
+</html>

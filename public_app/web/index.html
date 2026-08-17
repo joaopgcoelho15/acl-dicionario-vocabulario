@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="/dicionario-vocabulario/">
+  <meta name="acl-base-path" content="/dicionario-vocabulario">
+  <meta name="description" content="Plataforma unificada do Dicionário da Língua Portuguesa e do Vocabulário Ortográfico da Academia das Ciências de Lisboa.">
+  <title>Dicionário e Vocabulário — Academia das Ciências de Lisboa</title>
+  <link rel="icon" href="assets/acl-logo.png">
+  <link rel="stylesheet" href="assets/styles-v2.css">
+  <script src="assets/app-v2.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#conteudo">Saltar para o conteúdo</a>
+
+  <div class="institution-bar">
+    <div class="shell institution-bar__inner">
+      <a href="mailto:illlp@acad-ciencias.pt">illlp@acad-ciencias.pt</a>
+      <span>Instituto de Lexicologia e Lexicografia da Língua Portuguesa</span>
+    </div>
+  </div>
+
+  <header class="site-header">
+    <div class="shell site-header__inner">
+      <div class="brand">
+        <a class="brand__logo-link" href="https://www.acad-ciencias.pt/"
+           aria-label="Academia das Ciências de Lisboa" rel="noreferrer">
+          <img class="brand__logo" src="assets/acl-logo.png"
+               alt="Símbolo da Academia das Ciências de Lisboa">
+        </a>
+        <a class="brand__title" href="./" aria-label="Página inicial">
+          <strong>Dicionário e Vocabulário</strong>
+          <small>Academia das Ciências de Lisboa</small>
+        </a>
+      </div>
+      <nav aria-label="Navegação principal">
+        <a href="dicionario" data-collection-link="DLP">Dicionário</a>
+        <a href="vocabulario" data-collection-link="VOCABULARIO">Vocabulário</a>
+        <a href="https://www.acad-ciencias.pt/institutos/apresentacao-illp/" rel="noreferrer">ILLLP</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="conteudo">
+    <section class="hero">
+      <div class="shell hero__inner">
+        <p class="eyebrow">Academia das Ciências de Lisboa</p>
+        <h1>Consulte uma palavra</h1>
+        <p class="hero__intro">Pesquisa no Dicionário da Língua Portuguesa, no Vocabulário Ortográfico, ou em ambos.</p>
+
+        <form class="search-box" id="search-form" role="search">
+          <label class="sr-only" for="search-input">Pesquisar palavra, forma ou conceito</label>
+          <input id="search-input" name="query" type="search" autocomplete="off"
+                 placeholder="Procure uma palavra">
+          <button type="submit" aria-label="Pesquisar"><span aria-hidden="true">⌕</span><span>Pesquisar</span></button>
+        </form>
+
+        <div class="collection-tabs" role="group" aria-label="Fonte lexical">
+          <button type="button" class="collection-tab is-active" data-collection="">
+            Todos <span id="count-all">—</span>
+          </button>
+          <button type="button" class="collection-tab" data-collection="DLP">
+            Dicionário <span id="count-dlp">—</span>
+          </button>
+          <button type="button" class="collection-tab" data-collection="VOCABULARIO">
+            Vocabulário <span id="count-vocabulary">—</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="search-workspace shell" aria-live="polite">
+      <div class="filter-bar">
+        <button class="filter-toggle" id="filter-toggle" type="button" aria-expanded="false" aria-controls="filters">
+          Filtros <span id="active-filter-count"></span>
+        </button>
+        <div class="filters" id="filters">
+          <label>
+            <span>Classe gramatical</span>
+            <select id="grammar-filter"><option value="">Todas as classes</option></select>
+          </label>
+          <label>
+            <span>Domínio</span>
+            <select id="domain-filter"><option value="">Todos os domínios</option></select>
+          </label>
+          <label>
+            <span>Estado editorial</span>
+            <select id="status-filter"><option value="">Todos os estados</option></select>
+          </label>
+          <div class="filter-actions">
+            <button class="clear-filters" id="clear-filters" type="button">Limpar filtros</button>
+            <button class="clear-filters clear-all" id="clear-all" type="button">Limpar tudo</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="workspace-meta" id="workspace-meta" hidden>
+        <p id="result-summary"></p>
+      </div>
+
+      <div class="workspace-grid">
+        <aside class="results-panel" aria-label="Resultados da pesquisa">
+          <nav class="alphabet-index" id="alphabet-index"
+               aria-label="Saltar para uma letra"></nav>
+          <div class="results-list" id="results-list">
+            <div class="loading-card"></div>
+            <div class="loading-card"></div>
+            <div class="loading-card"></div>
+          </div>
+          <button class="load-more" id="load-more" type="button" hidden>Mostrar mais resultados</button>
+        </aside>
+
+        <article class="entry-panel" id="entry-panel">
+          <div class="entry-empty">
+            <span class="entry-empty__mark" aria-hidden="true">Aa</span>
+            <h2>Uma língua para explorar</h2>
+            <p>Pesquise uma palavra e selecione um resultado para consultar formas, aceções, exemplos, etimologia e relações lexicais.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell site-footer__grid">
+      <div>
+        <a class="footer__logo-link" href="https://www.acad-ciencias.pt/"
+           aria-label="Academia das Ciências de Lisboa" rel="noreferrer">
+          <img class="footer__logo" src="assets/acl-logo.png"
+               alt="Símbolo da Academia das Ciências de Lisboa">
+        </a>
+        <p>Academia das Ciências de Lisboa<br>Instituto de Lexicologia e Lexicografia da Língua Portuguesa</p>
+      </div>
+      <p>Prova de conceito baseada no XML consolidado do DLP e do Vocabulário Ortográfico.<br>
+        <a class="footer__utility-link" href="dados">Dados e diagnóstico</a>
+        <span aria-hidden="true"> · </span>
+        <a class="footer__utility-link" href="estatisticas">Estatísticas de utilização</a>
+      </p>
+    </div>
+  </footer>
+
+  <noscript>Esta interface necessita de JavaScript para pesquisar o corpus.</noscript>
+</body>
+</html>

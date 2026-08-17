@@ -1,0 +1,337 @@
+from __future__ import annotations
+
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import base64
+import hmac
+import json
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
+
+from .editorial_service import EditorialError, EditorialService
+from .publication_jobs import PublicationJobManager
+from .validation import validate_active_run, validation_summary
+
+
+def serve_editorial(
+    db_path: str | Path,
+    *,
+    releases_root: str | Path = "releases",
+    images_root: str | Path | None = None,
+    meili_url: str = "http://127.0.0.1:7700",
+    meili_key: str = "acl-local-development-key",
+    rng_path: str | Path | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8089,
+    base_path: str = "",
+    password: str | None = None,
+) -> None:
+    service = EditorialService(db_path)
+    jobs = PublicationJobManager(
+        db_path=db_path,
+        releases_root=releases_root,
+        images_root=images_root,
+        meili_url=meili_url,
+        meili_key=meili_key,
+        rng_path=rng_path,
+    )
+    handler = type(
+        "ACLEditorialHandler",
+        (_EditorialHandler,),
+        {
+            "service": service,
+            "jobs": jobs,
+            "web_root": Path(__file__).resolve().parents[2] / "editorial_app" / "web",
+            "base_path": _normalise_base_path(base_path),
+            "password": password,
+        },
+    )
+    server = ThreadingHTTPServer((host, port), handler)
+    print(f"Aplicação editorial local: http://{host}:{port}/")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+class _EditorialHandler(BaseHTTPRequestHandler):
+    service: EditorialService
+    jobs: PublicationJobManager
+    web_root: Path
+    base_path: str
+    password: str | None
+
+    def do_GET(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path != "/health" and not self._require_auth():
+            return
+        try:
+            if parsed.path == "/":
+                return self._file("index.html", "text/html; charset=utf-8")
+            if parsed.path == "/editorial.js":
+                return self._file("editorial.js", "text/javascript; charset=utf-8")
+            if parsed.path == "/editorial.css":
+                return self._file("editorial.css", "text/css; charset=utf-8")
+            if parsed.path == "/health":
+                return self._json(HTTPStatus.OK, {"status": "ok", "mode": "editable"})
+            if parsed.path == "/api/editorial/overview":
+                return self._json(HTTPStatus.OK, self.service.overview())
+            if parsed.path == "/api/editorial/users":
+                return self._json(
+                    HTTPStatus.OK, {"items": self.service.governance.users()}
+                )
+            if parsed.path == "/api/editorial/controlled-values":
+                query = parse_qs(parsed.query)
+                return self._json(
+                    HTTPStatus.OK,
+                    {
+                        "items": self.service.governance.list_values(
+                            query.get("category", [None])[0],
+                            query.get("status", [None])[0],
+                        )
+                    },
+                )
+            if parsed.path == "/api/editorial/validation":
+                return self._json(
+                    HTTPStatus.OK,
+                    validation_summary(self.service.db_path).as_dict(),
+                )
+            if parsed.path == "/api/editorial/entries":
+                query = parse_qs(parsed.query)
+                return self._json(
+                    HTTPStatus.OK,
+                    self.service.list_entries(
+                        query.get("q", [""])[0],
+                        int(query.get("limit", ["50"])[0]),
+                        int(query.get("offset", ["0"])[0]),
+                        resource=query.get("resource", [None])[0],
+                        workflow_status=query.get("workflow", [None])[0],
+                        editorial_status=query.get("editorial_status", [None])[0],
+                        grammar=query.get("grammar", [None])[0],
+                        domain=query.get("domain", [None])[0],
+                        severity=query.get("severity", [None])[0],
+                    ),
+                )
+            if parsed.path == "/api/editorial/publish/status":
+                return self._json(HTTPStatus.OK, self.jobs.status())
+            if parsed.path.startswith("/api/editorial/entries/"):
+                public_id, action = self._entry_target(parsed.path)
+                entry = self.service.get_entry(public_id)
+                if action == "revisions":
+                    return self._json(HTTPStatus.OK, {"items": entry["revisions"]})
+                if action:
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return self._json(HTTPStatus.OK, entry)
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        except Exception as exc:
+            self._handle_error(exc)
+
+    def do_PATCH(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if not self._require_auth():
+            return
+        try:
+            if parsed.path.startswith("/api/editorial/controlled-values/"):
+                value_id = int(parsed.path.rsplit("/", 1)[-1])
+                return self._json(
+                    HTTPStatus.OK,
+                    self.service.governance.update_value(value_id, self._body()),
+                )
+            if not parsed.path.startswith("/api/editorial/entries/"):
+                return self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            public_id, action = self._entry_target(parsed.path)
+            if action:
+                return self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return self._json(
+                HTTPStatus.OK, self.service.update_entry(public_id, self._body())
+            )
+        except Exception as exc:
+            self._handle_error(exc)
+
+    def do_POST(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if not self._require_auth():
+            return
+        try:
+            if parsed.path in {"/api/editorial/publish", "/api/editorial/releases/prepare"}:
+                payload = self._body()
+                return self._json(
+                    HTTPStatus.ACCEPTED,
+                    self.jobs.prepare(
+                        actor=str(payload.get("actor") or ""),
+                        description=str(payload.get("description") or ""),
+                    ),
+                )
+            if parsed.path == "/api/editorial/validate":
+                payload = self._body(optional=True)
+                result = validate_active_run(
+                    self.service.db_path,
+                    rng_path=payload.get("rng_path") or self.jobs.rng_path,
+                )
+                return self._json(HTTPStatus.OK, result.as_dict())
+            if parsed.path.startswith("/api/editorial/releases/"):
+                suffix = parsed.path.removeprefix("/api/editorial/releases/")
+                parts = suffix.split("/", 1)
+                if len(parts) != 2:
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                release_id, action = unquote(parts[0]), parts[1]
+                payload = self._body()
+                actor = str(payload.get("actor") or "")
+                comment = str(payload.get("comment") or "")
+                if action == "approve":
+                    value = self.jobs.approve(release_id, actor=actor, comment=comment)
+                    return self._json(HTTPStatus.OK, value)
+                if action == "publish":
+                    return self._json(
+                        HTTPStatus.ACCEPTED,
+                        self.jobs.publish(release_id, actor=actor),
+                    )
+                if action == "rollback":
+                    return self._json(
+                        HTTPStatus.ACCEPTED,
+                        self.jobs.rollback(
+                            release_id, actor=actor, comment=comment
+                        ),
+                    )
+                return self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            if parsed.path.startswith("/api/editorial/entries/"):
+                public_id, action = self._entry_target(parsed.path)
+                payload = self._body()
+                if action and action.startswith("issues/"):
+                    issue_parts = action.split("/")
+                    if len(issue_parts) == 3 and issue_parts[2] == "waive":
+                        return self._json(
+                            HTTPStatus.OK,
+                            self.service.waive_issue(
+                                public_id,
+                                unquote(issue_parts[1]),
+                                actor=str(payload.get("actor") or ""),
+                                reason=str(payload.get("reason") or ""),
+                            ),
+                        )
+                    if len(issue_parts) == 3 and issue_parts[2] == "fix":
+                        return self._json(
+                            HTTPStatus.OK,
+                            self.service.apply_issue_fix(
+                                public_id,
+                                unquote(issue_parts[1]),
+                                str(payload.get("fix_code") or ""),
+                                actor=str(payload.get("actor") or ""),
+                                comment=str(payload.get("comment") or ""),
+                            ),
+                        )
+                if action == "workflow":
+                    return self._json(
+                        HTTPStatus.OK,
+                        self.service.set_workflow(
+                            public_id,
+                            str(payload.get("target") or ""),
+                            actor=str(payload.get("actor") or ""),
+                            comment=str(payload.get("comment") or ""),
+                        ),
+                    )
+                if action and action.startswith("revisions/") and action.endswith("/restore"):
+                    revision_no = int(action.split("/")[1])
+                    return self._json(
+                        HTTPStatus.OK,
+                        self.service.restore_revision(
+                            public_id,
+                            revision_no,
+                            actor=str(payload.get("actor") or ""),
+                            comment=str(payload.get("comment") or ""),
+                        ),
+                    )
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        except Exception as exc:
+            self._handle_error(exc)
+
+    def _handle_error(self, exc: Exception) -> None:
+        if isinstance(exc, EditorialError):
+            status = HTTPStatus(exc.status)
+        elif isinstance(exc, PermissionError):
+            status = HTTPStatus.FORBIDDEN
+        elif isinstance(exc, RuntimeError):
+            status = HTTPStatus.CONFLICT
+        else:
+            status = HTTPStatus.BAD_REQUEST
+        self._json(status, {"error": type(exc).__name__, "message": str(exc)})
+
+    @staticmethod
+    def _entry_target(path: str) -> tuple[str, str | None]:
+        suffix = path.removeprefix("/api/editorial/entries/")
+        parts = suffix.split("/", 1)
+        return unquote(parts[0]), parts[1] if len(parts) > 1 else None
+
+    def _body(self, optional: bool = False) -> dict:
+        length = int(self.headers.get("Content-Length", "0"))
+        if not length:
+            if optional:
+                return {}
+            raise ValueError("Corpo JSON em falta.")
+        value = json.loads(self.rfile.read(length))
+        if not isinstance(value, dict):
+            raise ValueError("O corpo do pedido deve ser um objeto JSON.")
+        return value
+
+    def _file(self, name, content_type):
+        body = (self.web_root / name).read_bytes()
+        if content_type.startswith("text/html"):
+            encoded_base = self.base_path.encode("utf-8")
+            encoded_href = (
+                self.base_path + "/" if self.base_path else "/"
+            ).encode("utf-8")
+            body = body.replace(b"__ACL_EDITOR_BASE_HREF__", encoded_href)
+            body = body.replace(b"__ACL_EDITOR_BASE_PATH__", encoded_base)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _require_auth(self) -> bool:
+        if not self.password:
+            return True
+        header = self.headers.get("Authorization", "")
+        valid = False
+        if header.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
+                username, supplied = decoded.split(":", 1)
+                valid = hmac.compare_digest(username, "acl") and hmac.compare_digest(
+                    supplied, self.password
+                )
+            except (ValueError, UnicodeDecodeError):
+                valid = False
+        if valid:
+            return True
+        body = "Autenticação necessária.".encode("utf-8")
+        self.send_response(HTTPStatus.UNAUTHORIZED)
+        self.send_header("WWW-Authenticate", 'Basic realm="ACL - gestao editorial"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return False
+
+    def _json(self, status, value):
+        body = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+
+def _normalise_base_path(value: str) -> str:
+    value = str(value or "").strip()
+    if not value or value == "/":
+        return ""
+    return "/" + value.strip("/")

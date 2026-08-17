@@ -1,0 +1,102 @@
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.45.1
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?Defina MEILI_MASTER_KEY no ficheiro .env}
+      MEILI_NO_ANALYTICS: "true"
+    ports:
+      - "127.0.0.1:${MEILI_PORT:-7700}:7700"
+    volumes:
+      - meili_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  public:
+    build: .
+    restart: unless-stopped
+    environment:
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?Defina MEILI_MASTER_KEY no ficheiro .env}
+    command:
+      - acl-reference
+      - serve
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --releases-root
+      - /app/releases
+      - --base-path
+      - ${PUBLIC_BASE_PATH:-/dicionario-vocabulario}
+      - --usage-db
+      - /app/var/usage.sqlite
+      - --meili-url
+      - http://meilisearch:7700
+      - --meili-key
+      - ${MEILI_MASTER_KEY}
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${PUBLIC_PORT:-5059}:8000"
+    volumes:
+      - ./releases:/app/releases:ro
+      - ./var:/app/var
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 10
+
+  editorial:
+    build: .
+    restart: unless-stopped
+    environment:
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?Defina MEILI_MASTER_KEY no ficheiro .env}
+    command:
+      - acl-reference
+      - --db
+      - /app/var/editorial.sqlite
+      - serve-editorial
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --releases-root
+      - /app/releases
+      - --images-root
+      - /app/var/entry-images
+      - --rng-path
+      - /app/contracts/schemas/academia.rng
+      - --base-path
+      - ${EDITORIAL_BASE_PATH:-/dicionario-vocabulario/editor}
+      - --password
+      - ${EDITORIAL_PASSWORD:-ACL}
+      - --meili-url
+      - http://meilisearch:7700
+      - --meili-key
+      - ${MEILI_MASTER_KEY}
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${EDITORIAL_PORT:-5060}:8001"
+    volumes:
+      - ./releases:/app/releases
+      - ./var:/app/var
+      - ./contracts:/app/contracts:ro
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 10
+
+volumes:
+  meili_data:
+    name: acl_reference_meili_data
