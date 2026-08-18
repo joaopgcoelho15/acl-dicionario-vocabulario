@@ -22,6 +22,9 @@
     summary: document.querySelector("#result-summary"),
     results: document.querySelector("#results-list"),
     alphabet: document.querySelector("#alphabet-index"),
+    alphabetGuide: document.querySelector("#alphabet-guide"),
+    alphabetCurrent: document.querySelector("#alphabet-current"),
+    alphabetAll: document.querySelector("#alphabet-all"),
     loadMore: document.querySelector("#load-more"),
     entry: document.querySelector("#entry-panel"),
     countAll: document.querySelector("#count-all"),
@@ -218,6 +221,15 @@
       browseCatalogue({ reset: true });
     });
 
+    els.alphabetAll.addEventListener("click", () => {
+      state.query = "";
+      els.input.value = "";
+      state.browseStart = "";
+      state.offset = 0;
+      updateSearchUrl();
+      browseCatalogue({ reset: true });
+    });
+
     document.addEventListener("keydown", (event) => {
       if (
         event.key === "/" &&
@@ -272,6 +284,7 @@
     state.browseCursor = null;
     state.browseStart = "";
     els.alphabet.hidden = true;
+    els.alphabetGuide.hidden = true;
     updateAlphabet();
     els.loadMore.textContent = "Mostrar mais resultados";
     if (state.searchController) state.searchController.abort();
@@ -665,6 +678,7 @@
     state.browseTotal = null;
     state.browseHasMore = false;
     els.alphabet.hidden = false;
+    els.alphabetGuide.hidden = false;
     updateAlphabet();
     if (state.globalFacets) updateFacets(state.globalFacets);
     void browseCatalogue({ reset: true });
@@ -764,10 +778,11 @@
   function renderAlphabet() {
     const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
     els.alphabet.innerHTML = `
-      <button type="button" data-letter="" aria-label="Início do catálogo">•</button>
       ${letters.map((letter) => `
         <button type="button" data-letter="${letter}"
-                aria-label="Saltar para a letra ${letter}">${letter}</button>
+                aria-label="Mostrar entradas começadas por ${letter}"
+                title="Mostrar entradas começadas por ${letter}"
+                aria-pressed="false">${letter}</button>
       `).join("")}`;
     updateAlphabet();
   }
@@ -777,7 +792,12 @@
       const active = button.dataset.letter === state.browseStart;
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-current", active ? "true" : "false");
+      button.setAttribute("aria-pressed", String(active));
     });
+    els.alphabetCurrent.textContent = state.browseStart
+      ? `A mostrar entradas começadas por ${state.browseStart}.`
+      : "A mostrar entradas de todas as letras.";
+    els.alphabetAll.disabled = !state.browseStart;
   }
 
   function fullLabel(value) {
