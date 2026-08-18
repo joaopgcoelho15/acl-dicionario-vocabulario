@@ -42,6 +42,7 @@ def serve_editorial(
             "service": service,
             "jobs": jobs,
             "web_root": Path(__file__).resolve().parents[2] / "editorial_app" / "web",
+            "public_web_root": Path(__file__).resolve().parents[2] / "public_app" / "web",
             "base_path": _normalise_base_path(base_path),
             "password": password,
         },
@@ -60,6 +61,7 @@ class _EditorialHandler(BaseHTTPRequestHandler):
     service: EditorialService
     jobs: PublicationJobManager
     web_root: Path
+    public_web_root: Path
     base_path: str
     password: str | None
 
@@ -74,6 +76,12 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                 return self._file("editorial.js", "text/javascript; charset=utf-8")
             if parsed.path == "/editorial.css":
                 return self._file("editorial.css", "text/css; charset=utf-8")
+            if parsed.path == "/public-styles.css":
+                return self._file(
+                    "assets/styles.css", "text/css; charset=utf-8", root=self.public_web_root
+                )
+            if parsed.path == "/acl-logo.png":
+                return self._file("assets/acl-logo.png", "image/png", root=self.public_web_root)
             if parsed.path == "/health":
                 return self._json(HTTPStatus.OK, {"status": "ok", "mode": "editable"})
             if parsed.path == "/api/editorial/overview":
@@ -90,6 +98,8 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                         "items": self.service.governance.list_values(
                             query.get("category", [None])[0],
                             query.get("status", [None])[0],
+                            query.get("sort", ["alphabetical"])[0],
+                            query.get("direction", ["asc"])[0],
                         )
                     },
                 )
@@ -116,6 +126,15 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                 )
             if parsed.path == "/api/editorial/publish/status":
                 return self._json(HTTPStatus.OK, self.jobs.status())
+            if parsed.path == "/api/editorial/publication-entries":
+                query = parse_qs(parsed.query)
+                return self._json(
+                    HTTPStatus.OK,
+                    self.service.publication_entries(
+                        int(query.get("limit", ["200"])[0]),
+                        int(query.get("offset", ["0"])[0]),
+                    ),
+                )
             if parsed.path.startswith("/api/editorial/entries/"):
                 public_id, action = self._entry_target(parsed.path)
                 entry = self.service.get_entry(public_id)
@@ -155,6 +174,32 @@ class _EditorialHandler(BaseHTTPRequestHandler):
         if not self._require_auth():
             return
         try:
+            if parsed.path == "/api/editorial/controlled-values":
+                return self._json(
+                    HTTPStatus.CREATED,
+                    self.service.governance.create_value(self._body()),
+                )
+            if parsed.path == "/api/editorial/controlled-values/merge":
+                payload = self._body()
+                return self._json(
+                    HTTPStatus.OK,
+                    self.service.governance.merge_values(
+                        int(payload.get("source_id") or 0),
+                        int(payload.get("target_id") or 0),
+                        actor=str(payload.get("actor") or ""),
+                        comment=str(payload.get("comment") or ""),
+                    ),
+                )
+            if parsed.path == "/api/editorial/publication-selection":
+                payload = self._body()
+                return self._json(
+                    HTTPStatus.OK,
+                    self.service.select_for_publication(
+                        payload.get("public_ids") or [],
+                        actor=str(payload.get("actor") or ""),
+                        selected=bool(payload.get("selected", True)),
+                    ),
+                )
             if parsed.path in {"/api/editorial/publish", "/api/editorial/releases/prepare"}:
                 payload = self._body()
                 return self._json(
@@ -247,6 +292,24 @@ class _EditorialHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._handle_error(exc)
 
+    def do_DELETE(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if not self._require_auth():
+            return
+        try:
+            if parsed.path.startswith("/api/editorial/controlled-values/"):
+                value_id = int(parsed.path.rsplit("/", 1)[-1])
+                payload = self._body(optional=True)
+                self.service.governance.delete_value(
+                    value_id,
+                    actor=str(payload.get("actor") or ""),
+                    comment=str(payload.get("comment") or ""),
+                )
+                return self._json(HTTPStatus.OK, {"deleted": value_id})
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        except Exception as exc:
+            self._handle_error(exc)
+
     def _handle_error(self, exc: Exception) -> None:
         if isinstance(exc, EditorialError):
             status = HTTPStatus(exc.status)
@@ -275,8 +338,8 @@ class _EditorialHandler(BaseHTTPRequestHandler):
             raise ValueError("O corpo do pedido deve ser um objeto JSON.")
         return value
 
-    def _file(self, name, content_type):
-        body = (self.web_root / name).read_bytes()
+    def _file(self, name, content_type, *, root=None):
+        body = ((root or self.web_root) / name).read_bytes()
         if content_type.startswith("text/html"):
             encoded_base = self.base_path.encode("utf-8")
             encoded_href = (

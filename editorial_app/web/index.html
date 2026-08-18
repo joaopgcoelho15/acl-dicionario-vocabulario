@@ -5,92 +5,57 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <base href="__ACL_EDITOR_BASE_HREF__">
   <meta name="acl-editor-base-path" content="__ACL_EDITOR_BASE_PATH__">
-  <title>ACL — gestão editorial do DLP e VOLP</title>
+  <title>Gestão editorial — Dicionário e Vocabulário</title>
+  <link rel="icon" href="acl-logo.png">
+  <link rel="stylesheet" href="public-styles.css">
   <link rel="stylesheet" href="editorial.css">
 </head>
 <body>
-  <header class="masthead">
-    <div>
-      <p>Academia das Ciências de Lisboa · ILLLP</p>
-      <h1>Gestão editorial do DLP e VOLP</h1>
-    </div>
-    <div class="identity">
-      <label for="current-user">Responsável pela operação</label>
-      <select id="current-user" aria-label="Responsável pela operação"></select>
-      <small>O nome fica registado no histórico e na auditoria.</small>
-      <span class="local-badge">Gestão editorial</span>
-    </div>
-  </header>
-  <nav class="topnav" aria-label="Navegação editorial">
-    <button class="nav-link active" data-view="entries-panel">Entradas</button>
-    <button class="nav-link" data-view="governance-panel">Listas controladas</button>
-    <button class="nav-link" data-view="publication-panel">Validação e publicação</button>
+  <a class="skip-link" href="#conteudo">Saltar para o conteúdo</a>
+  <div class="institution-bar"><div class="shell institution-bar__inner"><a href="mailto:illlp@acad-ciencias.pt">illlp@acad-ciencias.pt</a><span>Instituto de Lexicologia e Lexicografia da Língua Portuguesa</span></div></div>
+  <header class="site-header"><div class="shell site-header__inner">
+    <div class="brand"><a class="brand__logo-link" href="https://www.acad-ciencias.pt/" aria-label="Academia das Ciências de Lisboa"><img class="brand__logo" src="acl-logo.png" alt="Símbolo da Academia das Ciências de Lisboa"></a><a class="brand__title" href="./"><strong>Gestão editorial</strong><small>Dicionário e Vocabulário</small></a></div>
+    <div class="editorial-identity"><label for="current-user">Responsável pela operação</label><select id="current-user" aria-label="Responsável pela operação"></select><span id="role-indicator" class="role-indicator"></span></div>
+  </div></header>
+  <nav class="editorial-nav" aria-label="Navegação editorial"><div class="shell editorial-nav__inner">
+    <button class="nav-link active" data-view="governance-panel">Listas controladas</button>
+    <button class="nav-link" data-view="entries-panel">Edição e Validação</button>
+    <button class="nav-link" data-view="publication-panel">Publicação</button>
     <a href="../" target="_blank" rel="noreferrer">Ver interface pública</a>
-  </nav>
+  </div></nav>
 
-  <main>
-    <section class="summary" id="overview" aria-live="polite">A carregar o estado editorial…</section>
-
-    <section id="entries-panel" class="view active">
-      <form id="search-form" class="search-panel">
-        <div class="search-main">
-          <label for="query">Pesquisar lema ou prefixo</label>
-          <div><input id="query" autocomplete="off"><button>Pesquisar</button></div>
-        </div>
-        <div class="filter-grid">
-          <label>Recurso<select id="resource-filter"><option value="">DLP e VOLP</option><option value="dictionary">Dicionário</option><option value="vocabulary">Vocabulário</option></select></label>
-          <label>Workflow<select id="workflow-filter"><option value="">Todos</option><option>IMPORTED</option><option>EDITING</option><option>REVIEW</option><option>VALIDATED</option><option>PUBLISHED</option></select></label>
-          <label>Estado da fonte<select id="source-status-filter"><option value="">Todos</option></select></label>
-          <label>Classe<select id="grammar-filter"><option value="">Todas</option></select></label>
-          <label>Domínio<select id="domain-filter"><option value="">Todos</option></select></label>
-          <label>Problemas<select id="severity-filter"><option value="">Todos</option><option value="error">Erros impeditivos</option><option value="warning">Avisos</option><option value="info">Informação</option></select></label>
-        </div>
-        <button id="clear-filters" class="secondary" type="button">Limpar pesquisa e filtros</button>
-      </form>
-      <p id="status" class="muted" aria-live="polite"></p>
-      <div class="layout">
-        <aside id="entries" class="entries" aria-label="Resultados"></aside>
-        <article id="detail" class="detail">
-          <div class="empty"><h2>Selecione uma entrada</h2><p>Edite, valide e acompanhe o histórico editorial.</p></div>
-        </article>
-      </div>
-    </section>
-
-    <section id="governance-panel" class="view">
-      <div class="section-heading">
-        <div><h2>Listas controladas prioritárias</h2><p>Valores autorizados, obsoletos e ainda por mapear.</p></div>
-        <div class="inline-controls">
-          <select id="controlled-category"><option value="grammar">Classes gramaticais</option><option value="domain">Domínios</option><option value="editorial_status">Estados editoriais</option></select>
-          <select id="controlled-status"><option value="">Todos</option><option value="unmapped">Por mapear</option><option value="authorized">Autorizados</option><option value="obsolete">Obsoletos</option></select>
-        </div>
+  <main id="conteudo" class="editorial-main shell">
+    <section class="editorial-summary" id="overview" aria-live="polite">A carregar o estado editorial…</section>
+    <section id="governance-panel" class="view active">
+      <div class="section-heading"><div><p class="eyebrow">Governação dos dados</p><h1>Listas controladas</h1><p>Edite os valores autorizados usados para classificar as entradas.</p></div><button id="add-controlled" type="button">Adicionar opção</button></div>
+      <aside class="help-card"><p><strong>Estado</strong> indica se o valor está autorizado, ainda por mapear ou obsoleto.</p><p><strong>Substituição</strong> indica o valor canónico que deve receber os usos de um valor obsoleto. A união só acontece depois de confirmar o merge.</p></aside>
+      <div class="governance-toolbar">
+        <label>Lista<select id="controlled-category"><option value="grammar">Classes gramaticais</option><option value="domain">Domínios</option><option value="editorial_status">Estados editoriais</option></select></label>
+        <label>Estado<select id="controlled-status"><option value="">Todos</option><option value="unmapped">Por mapear</option><option value="authorized">Autorizados</option><option value="obsolete">Obsoletos</option></select></label>
+        <label>Ordenar por<select id="controlled-sort"><option value="alphabetical">Alfabeto</option><option value="usage">Quantidade de uso</option></select></label>
+        <label>Direção<select id="controlled-direction"><option value="asc">Crescente</option><option value="desc">Decrescente</option></select></label>
       </div>
       <div id="controlled-values" class="table-wrap"></div>
     </section>
 
-    <section id="publication-panel" class="view">
-      <div class="publication-grid">
-        <section class="card">
-          <h2>1. Validar dados</h2>
-          <p>Executa regras de estrutura, identificadores, estados, relações e listas controladas.</p>
-          <button type="button" id="validate">Executar validações essenciais</button>
-          <p id="validation-status" class="muted"></p>
-        </section>
-        <section class="card">
-          <h2>2. Preparar candidata</h2>
-          <label for="release-description">Descrição</label>
-          <input id="release-description" value="Candidata de demonstração da Fase 1">
-          <button type="button" id="prepare-release">Preparar candidata</button>
-          <p id="publication-status" class="muted">Nenhuma operação em curso.</p>
-        </section>
-      </div>
-      <section class="card releases-card">
-        <h2>3. Aprovar, publicar ou reverter</h2>
-        <p>A aprovação e a publicação são operações separadas e auditadas.</p>
-        <div id="releases" class="table-wrap"></div>
+    <section id="entries-panel" class="view">
+      <section class="editorial-search"><form class="search-box" id="search-form" role="search"><label class="sr-only" for="query">Pesquisar lema ou prefixo</label><input id="query" type="search" autocomplete="off" placeholder="Procure uma palavra"><button type="submit"><span aria-hidden="true">⌕</span><span>Pesquisar</span></button></form>
+        <div class="filter-bar"><div class="filters editorial-filters">
+          <label><span>Recurso</span><select id="resource-filter"><option value="">Dicionário e Vocabulário</option></select></label><label><span>Workflow</span><select id="workflow-filter"><option value="">Todos</option></select></label><label><span>Estado editorial</span><select id="source-status-filter"><option value="">Todos</option></select></label><label><span>Classe gramatical</span><select id="grammar-filter"><option value="">Todas</option></select></label><label><span>Domínio</span><select id="domain-filter"><option value="">Todos</option></select></label><label><span>Problemas</span><select id="severity-filter"><option value="">Todos</option></select></label><button id="clear-filters" class="clear-filters clear-all" type="button">Limpar tudo</button>
+        </div></div>
       </section>
+      <p id="status" class="workspace-meta" aria-live="polite"></p>
+      <div class="workspace-grid editorial-workspace"><aside class="results-panel"><nav id="editorial-alphabet" class="alphabet-index" aria-label="Saltar para uma letra"></nav><div id="entries" class="results-list"></div><button id="load-more-editorial" class="load-more" type="button" hidden>Mostrar mais resultados</button></aside><article id="detail" class="entry-panel"><div class="entry-empty"><span class="entry-empty__mark">Aa</span><h2>Selecione uma entrada</h2><p>Consulte a apresentação pública e entre em modo de edição quando necessário.</p></div></article></div>
+    </section>
+
+    <section id="publication-panel" class="view">
+      <div class="section-heading"><div><p class="eyebrow">Última etapa do workflow</p><h1>Publicação</h1><p>Escolha, entre as entradas validadas, as alterações que entram na próxima versão pública.</p></div></div>
+      <section class="publication-selection card"><div class="card-heading"><div><h2>Entradas validadas</h2><p id="publication-selection-summary">A carregar…</p></div><div><button id="select-visible" type="button" class="secondary">Selecionar visíveis</button><button id="unselect-visible" type="button" class="secondary">Retirar visíveis</button></div></div><div id="publication-entries" class="publication-entry-list"></div></section>
+      <div class="publication-grid"><section class="card"><h2>1. Validar dados</h2><p>Verifica estrutura, identificadores, relações e listas controladas.</p><button type="button" id="validate">Executar validações</button><p id="validation-status" class="muted"></p></section><section class="card"><h2>2. Preparar candidata</h2><label for="release-description">Descrição</label><input id="release-description" value="Candidata editorial"><button type="button" id="prepare-release">Preparar candidata com a seleção</button><p id="publication-status" class="muted">Nenhuma operação em curso.</p></section></div>
+      <section class="card releases-card"><h2>3. Aprovar e publicar</h2><p>Apenas um aprovador pode ativar a candidata na aplicação pública.</p><div id="releases" class="table-wrap"></div></section>
     </section>
   </main>
-  <div id="toast" role="status" aria-live="polite"></div>
-  <script src="editorial.js"></script>
+  <footer class="site-footer"><div class="shell site-footer__grid"><div><img class="footer__logo" src="acl-logo.png" alt="Academia das Ciências de Lisboa"><p>Academia das Ciências de Lisboa<br>Instituto de Lexicologia e Lexicografia da Língua Portuguesa</p></div><p>Aplicação de gestão editorial do DLP e do Vocabulário Ortográfico.</p></div></footer>
+  <div id="toast" role="status" aria-live="polite"></div><script src="editorial.js"></script>
 </body>
 </html>

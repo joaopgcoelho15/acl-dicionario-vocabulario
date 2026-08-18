@@ -457,6 +457,81 @@ class ReferenceArchitectureTests(unittest.TestCase):
                 1,
             )
 
+    def test_controlled_values_are_ordered_and_merge_updates_the_corpus(self):
+        import_xml(self.source, self.db)
+        governance = GovernanceService(self.db)
+        self.assertEqual(
+            [user["role"] for user in governance.users()],
+            ["editor", "reviewer", "approver"],
+        )
+        target = governance.create_value(
+            {
+                "actor": "revisor.demo",
+                "category": "domain",
+                "value": "Zoologia",
+                "display_label": "Zoologia",
+            }
+        )
+        source = next(
+            value for value in governance.list_values("domain")
+            if value["value"] == "Zool."
+        )
+        governance.merge_values(
+            source["id"], target["id"], actor="revisor.demo", comment="Normalizar"
+        )
+        with sqlite3.connect(self.db) as connection:
+            label = connection.execute(
+                "SELECT value FROM labels WHERE label_type='dom'"
+            ).fetchone()[0]
+            raw_xml, workflow = connection.execute(
+                "SELECT raw_xml,workflow_status FROM entries WHERE public_id='DLP-cavalo_1-teste'"
+            ).fetchone()
+        self.assertEqual(label, "Zoologia")
+        self.assertIn(">Zoologia<", raw_xml)
+        self.assertEqual(workflow, "EDITING")
+
+    def test_selective_release_keeps_unselected_edits_out_of_public_data(self):
+        import_xml(self.source, self.db)
+        service = EditorialService(self.db)
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE entries SET workflow_status='PUBLISHED'")
+        cavalo = service.get_entry("DLP-cavalo_1-teste")
+        service.update_entry(
+            cavalo["public_id"],
+            {"actor": "editor.demo", "expected_updated_at": cavalo["updated_at"],
+             "lemma": "cavalo revisto", "senses": [], "comment": "revisão"},
+        )
+        exemplo = service.get_entry("VOLP-exemplo_1-teste")
+        service.update_entry(
+            exemplo["public_id"],
+            {"actor": "editor.demo", "expected_updated_at": exemplo["updated_at"],
+             "lemma": "exemplo revisto", "senses": [], "comment": "revisão"},
+        )
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE entries SET workflow_status='VALIDATED'")
+            connection.execute(
+                "UPDATE entries SET lemma='',lemma_normalized='' WHERE public_id='VOLP-exemplo_1-teste'"
+            )
+        service.select_for_publication(
+            ["DLP-cavalo_1-teste"], actor="aprovador.demo", selected=True
+        )
+        result = build_release(
+            self.db, self.releases, release_id="selective-001", selection_mode=True
+        )
+        dictionary = json.loads(
+            (result.path / "dictionary.ndjson").read_text(encoding="utf-8")
+        )
+        vocabulary = json.loads(
+            (result.path / "vocabulary.ndjson").read_text(encoding="utf-8")
+        )
+        self.assertEqual(dictionary["lemma"], "cavalo revisto")
+        self.assertEqual(vocabulary["lemma"], "exemplo")
+        with sqlite3.connect(self.db) as connection:
+            selected = connection.execute(
+                "SELECT COUNT(*) FROM release_entries WHERE release_id='selective-001'"
+            ).fetchone()[0]
+        self.assertEqual(selected, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -68,7 +68,7 @@ class PublicationJobManager:
         self.governance.require_user(
             actor, {"editor", "reviewer", "approver", "administrator"}
         )
-        valid, message = self.editorial.can_publish()
+        valid, message = self.editorial.can_publish(require_selection=True)
         if not valid:
             raise ValueError(message)
         release_id = datetime.now(timezone.utc).strftime("local-%Y%m%d-%H%M%S")
@@ -185,6 +185,7 @@ class PublicationJobManager:
                 prepared_by=actor,
                 description=description or "Versão candidata",
                 rng_path=self.rng_path,
+                selection_mode=True,
             )
             self._finish(
                 "succeeded",
@@ -239,7 +240,8 @@ class PublicationJobManager:
                 verify_integrity=False,
             )
             pointer_activated = True
-            self.editorial.mark_published()
+            if not rollback:
+                self.editorial.mark_published(release_id)
             with connect(self.db_path) as connection:
                 connection.execute(
                     """
