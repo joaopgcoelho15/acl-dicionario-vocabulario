@@ -7,6 +7,7 @@ let controlledValues = [];
 let publicationItems = [];
 let publicationTimer = null;
 let entryOffset = 0;
+let activeAlphabet = "";
 
 function apiUrl(path) { const value = path.startsWith("/") ? path : `/${path}`; return `${editorialBasePath}${value}` || "/"; }
 function publicUrl(path) { const root = editorialBasePath.replace(/\/editor$/, ""); return `${root}/${String(path).replace(/^\//, "")}`; }
@@ -89,9 +90,9 @@ $("#add-controlled").addEventListener("click", async () => { const value = promp
 async function deleteControlledValue(id) { const item = controlledValues.find(value => value.id === id); if (!confirm(`Apagar “${item.value}”? Só é possível se não estiver em uso.`)) return; try { await api(`/api/editorial/controlled-values/${id}`, {method:"DELETE",body:JSON.stringify({actor:actor(),comment:"Remoção de valor controlado"})}); toast("Valor apagado."); loadControlledValues(); } catch (error) { toast(error.message,true); } }
 
 // Pesquisa, visualização pública e edição
-$("#search-form").addEventListener("submit", event => { event.preventDefault(); loadEntries(); });
-document.querySelectorAll("#entries-panel select").forEach(select => select.addEventListener("change", loadEntries));
-$("#clear-filters").addEventListener("click", () => { $("#query").value = ""; document.querySelectorAll("#entries-panel select").forEach(select => { select.value = ""; }); loadEntries(); });
+$("#search-form").addEventListener("submit", event => { event.preventDefault(); setActiveAlphabet(""); loadEntries(); });
+document.querySelectorAll("#entries-panel select").forEach(select => select.addEventListener("change", () => loadEntries()));
+$("#clear-filters").addEventListener("click", () => { $("#query").value = ""; setActiveAlphabet(""); document.querySelectorAll("#entries-panel select").forEach(select => { select.value = ""; }); loadEntries(); });
 async function loadEntries(append = false) {
   if (!append) entryOffset = 0;
   $("#status").textContent = "A pesquisar…"; const params = new URLSearchParams({q:$("#query").value,limit:"100",offset:String(entryOffset)});
@@ -100,8 +101,11 @@ async function loadEntries(append = false) {
   try { const payload = await api(`/api/editorial/entries?${params}`); const markup = payload.items.map(item => `<button class="result-card${item.public_id === selectedId ? " is-selected" : ""}" data-entry-id="${h(item.public_id)}"><span class="result-card__top"><h3>${h(item.lemma || "(sem lema)")}</h3><span class="result-card__source">${h(resourceLabel(item.resource))}</span></span><p class="result-card__grammar">${h(item.grammatical_info || "sem classificação")}</p><small>${h(workflowLabel(item.workflow_status))}${item.error_count ? ` · ${n(item.error_count)} erros` : item.warning_count ? ` · ${n(item.warning_count)} avisos` : ""}</small></button>`).join(""); if (append) $("#entries").insertAdjacentHTML("beforeend",markup); else $("#entries").innerHTML = markup || `<div class="entry-empty"><p>Sem resultados.</p></div>`; entryOffset += payload.items.length; $("#status").textContent = `${n(payload.total)} resultados`; $("#load-more-editorial").hidden = entryOffset >= payload.total; document.querySelectorAll("[data-entry-id]:not([data-bound])").forEach(node => { node.dataset.bound = "true"; node.addEventListener("click", () => showEntry(node.dataset.entryId)); }); } catch (error) { $("#status").textContent = error.message; }
 }
 $("#load-more-editorial").addEventListener("click", () => loadEntries(true));
-$("#editorial-alphabet").innerHTML = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map(letter => `<button type="button" data-letter="${letter.toLowerCase()}">${letter}</button>`).join("");
-document.querySelectorAll("[data-letter]").forEach(node => node.addEventListener("click", () => { $("#query").value = node.dataset.letter; loadEntries(); }));
+$("#editorial-alphabet").innerHTML = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map(letter => `<button type="button" data-letter="${letter.toLowerCase()}" aria-pressed="false" title="Mostrar entradas começadas por ${letter}">${letter}</button>`).join("");
+function setActiveAlphabet(letter) { activeAlphabet = letter; document.querySelectorAll("[data-letter]").forEach(node => { const active = node.dataset.letter === letter; node.classList.toggle("is-active",active); node.setAttribute("aria-pressed",String(active)); }); $("#alphabet-current").textContent = letter ? `A mostrar entradas começadas por ${letter.toUpperCase()}.` : "A mostrar entradas de todas as letras."; $("#alphabet-all").disabled = !letter; }
+document.querySelectorAll("[data-letter]").forEach(node => node.addEventListener("click", () => { $("#query").value = node.dataset.letter; setActiveAlphabet(node.dataset.letter); loadEntries(); }));
+$("#alphabet-all").addEventListener("click", () => { $("#query").value = ""; setActiveAlphabet(""); loadEntries(); });
+setActiveAlphabet("");
 async function showEntry(id) { try { selectedId = id; selectedEntry = await api(`/api/editorial/entries/${encodeURIComponent(id)}`); renderPublicEntry(selectedEntry); document.querySelectorAll("[data-entry-id]").forEach(node => node.classList.toggle("is-selected",node.dataset.entryId===id)); } catch (error) { toast(error.message,true); } }
 function renderPublicEntry(item) {
   const entry = item.public_view; const lexical = entry.lexical || {}; let previousSection = null; let index = 0;
