@@ -37,6 +37,7 @@ def build_release(
     description: str = "Versão candidata",
     rng_path: str | Path | None = None,
     resume: bool = False,
+    selection_mode: bool = False,
 ) -> PublicationResult:
     initialize(db_path)
     GovernanceService(db_path).require_user(
@@ -44,9 +45,25 @@ def build_release(
     )
     validation = validate_active_run(db_path, rng_path=rng_path)
     if not validation.valid:
-        raise RuntimeError(
-            f"A candidata não pode ser preparada: {validation.errors} erros impeditivos."
-        )
+        selected_errors = validation.errors
+        if selection_mode:
+            with connect(db_path) as validation_connection:
+                selected_errors = int(validation_connection.execute(
+                    """
+                    SELECT COUNT(*) FROM validation_issues vi
+                    JOIN publication_selections ps ON ps.entry_id=vi.entry_id
+                    JOIN entries e ON e.id=vi.entry_id
+                    WHERE vi.severity='error' AND NOT EXISTS (
+                        SELECT 1 FROM validation_waivers vw
+                        WHERE vw.entry_id=vi.entry_id AND vw.rule_code=vi.rule_code
+                          AND vw.entry_sha256=e.raw_sha256 AND vw.revoked_at IS NULL
+                    )
+                    """
+                ).fetchone()[0])
+        if selected_errors:
+            raise RuntimeError(
+                f"A candidata não pode ser preparada: {selected_errors} erros impeditivos nas entradas selecionadas."
+            )
     release_id = release_id or datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M%S")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", release_id):
         raise ValueError("release_id inválido.")
@@ -62,6 +79,15 @@ def build_release(
     if active_run is None:
         connection.close()
         raise RuntimeError("Não existe uma importação editorial ativa.")
+    selected_entry_ids = {
+        int(row["entry_id"])
+        for row in connection.execute(
+            "SELECT entry_id FROM publication_selections"
+        ).fetchall()
+    } if selection_mode else set()
+    if selection_mode and not selected_entry_ids:
+        connection.close()
+        raise RuntimeError("A candidata não tem entradas selecionadas.")
 
     counts = {"entries": 0, "dictionary": 0, "vocabulary": 0}
     issues: list[dict] = []
@@ -102,14 +128,39 @@ def build_release(
         )
         for row in rows:
             try:
-                document = build_public_document(
-                    row, connection, release_id, lemma_index
-                )
+                export_row = row
+                document = None
+                if selection_mode and row["id"] not in selected_entry_ids:
+                    snapshot = connection.execute(
+                        "SELECT raw_xml,document_json FROM published_entry_snapshots WHERE entry_id=?",
+                        (row["id"],),
+                    ).fetchone()
+                    if snapshot:
+                        export_row = {**dict(row), "raw_xml": snapshot["raw_xml"]}
+                        document = json.loads(snapshot["document_json"])
+                        document["publication_version"] = release_id
+                    else:
+                        revision = connection.execute(
+                            "SELECT snapshot_json FROM revisions WHERE entry_id=? ORDER BY revision_no LIMIT 1",
+                            (row["id"],),
+                        ).fetchone()
+                        if revision:
+                            original = json.loads(revision["snapshot_json"])["entry"]
+                            export_row = {**dict(row), **{
+                                key: original[key] for key in (
+                                    "lemma", "lemma_normalized", "grammatical_info",
+                                    "editorial_status", "raw_xml", "raw_sha256"
+                                ) if key in original
+                            }}
+                if document is None:
+                    document = build_public_document(
+                        export_row, connection, release_id, lemma_index
+                    )
                 _validate_public_document(document)
                 target = dictionary if row["resource"] == "dictionary" else vocabulary
                 target.write(json.dumps(document, ensure_ascii=False, separators=(",", ":")))
                 target.write("\n")
-                canonical.write(row["raw_xml"])
+                canonical.write(export_row["raw_xml"])
                 canonical.write("\n")
                 counts["entries"] += 1
                 counts[row["resource"]] += 1
@@ -369,6 +420,7 @@ def build_release(
         "quality": validation_report["quality"],
         "prepared_by": prepared_by,
         "description": description,
+        "selected_changes": len(selected_entry_ids) if selection_mode else counts["entries"],
         "indexes": {
             "dictionary": f"dictionary__{_safe_index_suffix(release_id)}",
             "vocabulary": f"vocabulary__{_safe_index_suffix(release_id)}",
@@ -392,6 +444,11 @@ def build_release(
             json.dumps(validation_report, ensure_ascii=False),
         ),
     )
+    if selection_mode:
+        connection.executemany(
+            "INSERT INTO release_entries(release_id,entry_id) VALUES(?,?)",
+            [(release_id, entry_id) for entry_id in sorted(selected_entry_ids)],
+        )
     connection.execute(
         """
         INSERT INTO audit_events(

@@ -8,8 +8,10 @@ import sqlite3
 import xml.etree.ElementTree as ET
 
 from .editorial_db import connect, initialize, transaction
-from .governance import GovernanceService, synchronize_controlled_values
+from .governance import GovernanceService, refresh_controlled_values
 from .normalization import search_key
+from .public_document import build_public_document
+from .labels import domain_label, grammar_label, status_label
 
 XML_ID = "{http://www.w3.org/XML/1998/namespace}id"
 TEI = "http://www.tei-c.org/ns/1.0"
@@ -162,6 +164,17 @@ class EditorialService:
                 key: [item["value"] for item in filter_counts[key]]
                 for key in ("editorial_statuses", "grammar", "domains")
             }
+            controlled_options = {
+                category: [dict(item) for item in connection.execute(
+                    """
+                    SELECT value,display_label FROM controlled_values
+                     WHERE category=? AND governance_status<>'obsolete'
+                     ORDER BY value COLLATE NOCASE
+                    """,
+                    (category,),
+                )]
+                for category in ("grammar", "domain", "editorial_status")
+            }
         return {
             "mode": "editable",
             "active_import": dict(run) if run else None,
@@ -172,6 +185,7 @@ class EditorialService:
             "users": self.governance.users(),
             "filter_options": filter_options,
             "filter_counts": filter_counts,
+            "controlled_options": controlled_options,
         }
 
     def list_entries(
@@ -325,7 +339,87 @@ class EditorialService:
                     (entry_id,),
                 ).fetchall()
             ]
+            value["selected_for_publication"] = bool(
+                connection.execute(
+                    "SELECT 1 FROM publication_selections WHERE entry_id=?", (entry_id,)
+                ).fetchone()
+            )
+            document = build_public_document(row, connection, "editorial-preview")
+            value["public_view"] = _public_preview(document)
+            value["public_view"]["workflow_status"] = row["workflow_status"]
         return value
+
+    def publication_entries(self, limit: int = 200, offset: int = 0) -> dict:
+        limit, offset = max(1, min(limit, 500)), max(0, offset)
+        with connect(self.db_path) as connection:
+            run = self._active_run(connection)
+            if run is None:
+                return {"total": 0, "selected": 0, "items": []}
+            total = connection.execute(
+                "SELECT COUNT(*) FROM entries WHERE import_run_id=? AND workflow_status='VALIDATED'",
+                (run["id"],),
+            ).fetchone()[0]
+            selected = connection.execute(
+                """
+                SELECT COUNT(*) FROM publication_selections ps
+                JOIN entries e ON e.id=ps.entry_id
+                WHERE e.import_run_id=? AND e.workflow_status='VALIDATED'
+                """,
+                (run["id"],),
+            ).fetchone()[0]
+            rows = connection.execute(
+                """
+                SELECT e.id,e.public_id,e.resource,e.lemma,e.grammatical_info,
+                       e.editorial_status,e.updated_at,
+                       CASE WHEN ps.entry_id IS NULL THEN 0 ELSE 1 END AS selected
+                FROM entries e LEFT JOIN publication_selections ps ON ps.entry_id=e.id
+                WHERE e.import_run_id=? AND e.workflow_status='VALIDATED'
+                ORDER BY e.lemma_normalized,e.source_ordinal LIMIT ? OFFSET ?
+                """,
+                (run["id"], limit, offset),
+            ).fetchall()
+        return {"total": total, "selected": selected, "items": [dict(row) for row in rows]}
+
+    def select_for_publication(
+        self, public_ids: list[str], *, actor: str, selected: bool
+    ) -> dict:
+        self.governance.require_user(actor, {"approver", "administrator"})
+        clean_ids = [str(value) for value in public_ids if str(value).strip()]
+        if not clean_ids:
+            raise EditorialError("Selecione pelo menos uma entrada.")
+        placeholders = ",".join("?" for _ in clean_ids)
+        with transaction(self.db_path) as connection:
+            rows = connection.execute(
+                f"SELECT id,public_id,workflow_status FROM entries WHERE public_id IN ({placeholders})",
+                clean_ids,
+            ).fetchall()
+            if len(rows) != len(set(clean_ids)):
+                raise EditorialError("Uma ou mais entradas selecionadas não existem.")
+            if selected and any(row["workflow_status"] != "VALIDATED" for row in rows):
+                raise InvalidWorkflow("Só podem entrar em publicação entradas validadas.")
+            for row in rows:
+                if selected:
+                    connection.execute(
+                        """
+                        INSERT INTO publication_selections(entry_id,selected_by)
+                        VALUES(?,?) ON CONFLICT(entry_id) DO UPDATE SET
+                        selected_by=excluded.selected_by,selected_at=CURRENT_TIMESTAMP
+                        """,
+                        (row["id"], actor),
+                    )
+                else:
+                    connection.execute(
+                        "DELETE FROM publication_selections WHERE entry_id=?", (row["id"],)
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO audit_events(event_type,actor,entry_id,resulting_state,comment)
+                    VALUES('PUBLICATION_SELECTION',?,?,?,?)
+                    """,
+                    (actor, row["id"], "selected" if selected else "pending",
+                     "Entrada incluída na próxima candidata" if selected else "Entrada retirada da próxima candidata"),
+                )
+        return self.publication_entries()
 
     @staticmethod
     def _issue_value(connection, entry_id: int, raw_sha256: str, row) -> dict:
@@ -439,6 +533,10 @@ class EditorialService:
                     "A entrada foi alterada depois de ser aberta. Recarregue-a antes de gravar."
                 )
             snapshot = self._snapshot(connection, row)
+            old_domains = {
+                item["value"] for item in snapshot.get("labels", [])
+                if item.get("label_type") in {"domain", "dom"}
+            }
             revision_no = int(
                 connection.execute(
                     "SELECT COALESCE(MAX(revision_no), 0) + 1 FROM revisions WHERE entry_id=?",
@@ -534,7 +632,23 @@ class EditorialService:
                     json.dumps({"revision_no": revision_no}, ensure_ascii=False),
                 ),
             )
-        synchronize_controlled_values(self.db_path)
+            connection.execute(
+                "DELETE FROM publication_selections WHERE entry_id=?", (row["id"],)
+            )
+            new_domains = {
+                item["value"] for item in connection.execute(
+                    "SELECT value FROM labels WHERE entry_id=? AND label_type IN ('domain','dom')",
+                    (row["id"],),
+                )
+            }
+        refresh_controlled_values(
+            self.db_path,
+            {
+                "grammar": {row["grammatical_info"], grammar},
+                "editorial_status": {row["editorial_status"], source_status},
+                "domain": old_domains | new_domains,
+            },
+        )
         return self.get_entry(public_id)
 
     def set_workflow(
@@ -578,6 +692,10 @@ class EditorialService:
                 "UPDATE entries SET workflow_status=?, updated_at=? WHERE id=?",
                 (target, now, row["id"]),
             )
+            if target != "VALIDATED":
+                connection.execute(
+                    "DELETE FROM publication_selections WHERE entry_id=?", (row["id"],)
+                )
             connection.execute(
                 """
                 INSERT INTO audit_events(
@@ -665,21 +783,55 @@ class EditorialService:
             )
         return self.get_entry(public_id)
 
-    def mark_published(self) -> None:
+    def mark_published(self, release_id: str | None = None) -> None:
         with transaction(self.db_path) as connection:
-            connection.execute(
-                """
-                UPDATE entries SET workflow_status='PUBLISHED'
-                 WHERE workflow_status='VALIDATED'
-                """
-            )
+            if release_id:
+                rows = connection.execute(
+                    """
+                    SELECT e.* FROM entries e JOIN release_entries re ON re.entry_id=e.id
+                     WHERE re.release_id=?
+                    """,
+                    (release_id,),
+                ).fetchall()
+                for row in rows:
+                    document = build_public_document(row, connection, release_id)
+                    connection.execute(
+                        """
+                        INSERT INTO published_entry_snapshots(
+                            entry_id,raw_xml,document_json,release_id
+                        ) VALUES(?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET
+                            raw_xml=excluded.raw_xml,document_json=excluded.document_json,
+                            release_id=excluded.release_id,updated_at=CURRENT_TIMESTAMP
+                        """,
+                        (row["id"], row["raw_xml"],
+                         json.dumps(document, ensure_ascii=False), release_id),
+                    )
+                connection.execute(
+                    """
+                    UPDATE entries SET workflow_status='PUBLISHED'
+                     WHERE id IN (SELECT entry_id FROM release_entries WHERE release_id=?)
+                    """,
+                    (release_id,),
+                )
+                connection.execute(
+                    "DELETE FROM publication_selections WHERE entry_id IN (SELECT entry_id FROM release_entries WHERE release_id=?)",
+                    (release_id,),
+                )
+            else:
+                connection.execute(
+                    "UPDATE entries SET workflow_status='PUBLISHED' WHERE workflow_status='VALIDATED'"
+                )
 
-    def can_publish(self) -> tuple[bool, str | None]:
+    def can_publish(self, *, require_selection: bool = False) -> tuple[bool, str | None]:
         with connect(self.db_path) as connection:
+            selected = connection.execute(
+                "SELECT COUNT(*) FROM publication_selections"
+            ).fetchone()[0]
             errors = connection.execute(
                 """
                 SELECT COUNT(*) FROM validation_issues vi
                 LEFT JOIN entries e ON e.id=vi.entry_id
+                JOIN publication_selections ps ON ps.entry_id=vi.entry_id
                 WHERE vi.severity='error' AND NOT EXISTS (
                     SELECT 1 FROM validation_waivers vw
                      WHERE vw.entry_id=vi.entry_id
@@ -689,18 +841,35 @@ class EditorialService:
                 )
                 """
             ).fetchone()[0]
-            editing = connection.execute(
+            invalid = connection.execute(
                 """
-                SELECT COUNT(*) FROM entries
-                 WHERE workflow_status IN ('EDITING','REVIEW')
+                SELECT COUNT(*) FROM publication_selections ps JOIN entries e ON e.id=ps.entry_id
+                 WHERE e.workflow_status<>'VALIDATED'
                 """
             ).fetchone()[0]
+            if not require_selection:
+                errors = connection.execute(
+                    """
+                    SELECT COUNT(*) FROM validation_issues vi LEFT JOIN entries e ON e.id=vi.entry_id
+                    WHERE vi.severity='error' AND NOT EXISTS (
+                        SELECT 1 FROM validation_waivers vw WHERE vw.entry_id=vi.entry_id
+                          AND vw.rule_code=vi.rule_code AND vw.entry_sha256=e.raw_sha256
+                          AND vw.revoked_at IS NULL
+                    )
+                    """
+                ).fetchone()[0]
+                invalid = connection.execute(
+                    "SELECT COUNT(*) FROM entries WHERE workflow_status IN ('EDITING','REVIEW')"
+                ).fetchone()[0]
+        if require_selection and not selected:
+            return False, "Selecione pelo menos uma entrada validada para a candidata."
         if errors:
             return False, f"Existem {errors} erros de validação."
-        if editing:
+        if invalid:
             return False, (
-                f"Existem {editing} entradas em edição ou revisão; "
-                "valide-as antes de publicar."
+                "A seleção contém entradas que já não estão validadas."
+                if require_selection else
+                f"Existem {invalid} entradas em edição ou revisão; valide-as antes de publicar."
             )
         return True, None
 
@@ -978,6 +1147,77 @@ class EditorialService:
 def _nullable(value) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _public_preview(document: dict) -> dict:
+    """Adapta a projeção canónica ao mesmo contrato visual da interface pública."""
+    grammar = (document.get("grammatical_categories") or [None])[0]
+    senses = []
+    for sense in document.get("senses") or []:
+        provenance = sense.get("provenance") or {}
+        senses.append(
+            {
+                "xml_id": sense.get("id"),
+                "number": sense.get("number"),
+                "depth": sense.get("depth"),
+                "section": sense.get("section"),
+                "definition": sense.get("definition"),
+                "definition_segments": sense.get("definition_segments") or [],
+                "labels": [
+                    {
+                        "type": label.get("type"),
+                        "value": label.get("value"),
+                        "label": domain_label(label.get("value"))
+                        if label.get("type") in {"dom", "domain"}
+                        else label.get("value"),
+                    }
+                    for label in sense.get("labels") or []
+                ],
+                "examples": sense.get("examples") or [],
+                "references": [
+                    {
+                        "type": relation.get("type"),
+                        "value": relation.get("target_text"),
+                        "target": relation.get("target_id"),
+                    }
+                    for relation in sense.get("relations") or []
+                ],
+                "notes": sense.get("notes") or [],
+                "images": sense.get("images") or [],
+                "source": {
+                    "code": provenance.get("source"),
+                    "url": provenance.get("source_url"),
+                    "license": provenance.get("license"),
+                }
+                if provenance
+                else None,
+            }
+        )
+    return {
+        "xml_id": document.get("source_id"),
+        "lemma": document.get("lemma"),
+        "grammatical_info": grammar,
+        "grammatical_label": grammar_label(grammar),
+        "source_status": document.get("status"),
+        "source_status_label": status_label(document.get("status")),
+        "lexical": {
+            "orthographies": document.get("forms") or [],
+            "gloss_items": [
+                {"value": value, "segments": []}
+                for value in document.get("glosses") or []
+            ],
+            "senses": senses,
+            "etymologies": [document["etymology_text"]]
+            if document.get("etymology_text")
+            else [],
+            "notes": [],
+            "references": [
+                {"value": relation.get("target_text"), "target": relation.get("target_id")}
+                for relation in document.get("relations") or []
+            ],
+            "images": document.get("images") or [],
+        },
+    }
 
 
 def _local(tag: str) -> str:

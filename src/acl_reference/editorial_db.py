@@ -190,10 +190,31 @@ CREATE TABLE IF NOT EXISTS controlled_values (
     governance_status TEXT NOT NULL DEFAULT 'unmapped'
         CHECK (governance_status IN ('authorized', 'obsolete', 'unmapped')),
     replacement_value TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
     usage_count INTEGER NOT NULL DEFAULT 0,
     updated_by TEXT,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(category, value)
+);
+
+CREATE TABLE IF NOT EXISTS publication_selections (
+    entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+    selected_by TEXT NOT NULL REFERENCES editorial_users(username),
+    selected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS release_entries (
+    release_id TEXT NOT NULL REFERENCES releases(release_id) ON DELETE CASCADE,
+    entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    PRIMARY KEY(release_id, entry_id)
+);
+
+CREATE TABLE IF NOT EXISTS published_entry_snapshots (
+    entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+    raw_xml TEXT NOT NULL,
+    document_json TEXT NOT NULL,
+    release_id TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -253,6 +274,8 @@ CREATE INDEX IF NOT EXISTS idx_entries_run_grammar
     ON entries(import_run_id, grammatical_info);
 CREATE INDEX IF NOT EXISTS idx_entries_run_resource
     ON entries(import_run_id, resource, lemma_normalized, source_ordinal);
+CREATE INDEX IF NOT EXISTS idx_publication_selections_selected_at
+    ON publication_selections(selected_at, entry_id);
 """
 
 
@@ -345,6 +368,14 @@ def _initialize_once(path: str | Path) -> None:
         ):
             if name not in release_columns:
                 connection.execute(f"ALTER TABLE releases ADD COLUMN {name} {definition}")
+        controlled_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(controlled_values)").fetchall()
+        }
+        if "sort_order" not in controlled_columns:
+            connection.execute(
+                "ALTER TABLE controlled_values ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+            )
         connection.executemany(
             """
             INSERT INTO editorial_users(username, display_name, role)
