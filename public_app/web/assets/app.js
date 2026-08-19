@@ -335,11 +335,12 @@
   function renderResults(items, { append }) {
     const html = items.map((item) => {
       const selected = item.xml_id === state.selectedId ? " is-selected" : "";
+      const workflow = workflowClass(item.workflow_status || "PUBLISHED");
       const summary = item.summary
         ? `<p class="result-card__summary">${highlight(item.summary, state.query)}</p>`
         : "";
       return `
-        <button class="result-card${selected}" type="button" data-entry-id="${h(item.xml_id || "")}">
+        <button class="result-card ${workflow}${selected}" type="button" data-entry-id="${h(item.xml_id || "")}">
           <span class="result-card__top">
             <h3>${highlight(item.lemma || "(sem lema)", state.query)}</h3>
             <span class="result-card__source">${h(sourceLabel(item))}</span>
@@ -494,7 +495,7 @@
     const debugJson = h(JSON.stringify(entry, null, 2));
 
     els.entry.innerHTML = `
-      <header class="entry-header">
+      <header class="entry-header ${workflowClass(entry.workflow_status || "PUBLISHED")}">
         <div class="entry-header__meta">
           <span class="source-badge">${h(source)}</span>
           <span class="status-badge">${h(fullLabel(entry.source_status_label || statusLabel(entry.source_status)))}</span>
@@ -819,6 +820,16 @@
       "Importação SPE": "Importação SPE",
     };
     return labels[value || ""] || value;
+  }
+
+  function workflowClass(value) {
+    return {
+      IMPORTED: "workflow-imported",
+      EDITING: "workflow-editing",
+      REVIEW: "workflow-review",
+      VALIDATED: "workflow-validated",
+      PUBLISHED: "workflow-published",
+    }[String(value || "").toUpperCase()] || "workflow-imported";
   }
 
   function sourceLabel(entry) {

@@ -543,8 +543,53 @@ button {
 }
 
 .result-card.is-selected {
-  box-shadow: inset 4px 0 0 var(--terracotta);
-  background: #f6ece9;
+  box-shadow: inset 7px 0 0 var(--workflow-accent, var(--terracotta));
+  background: var(--workflow-bg, #f6ece9);
+}
+
+/* A mesma paleta acompanha uma entrada durante todo o workflow editorial. */
+.workflow-imported {
+  --workflow-bg: #f1f1ef;
+  --workflow-accent: #756f6b;
+  --workflow-text: #484340;
+}
+
+.workflow-editing {
+  --workflow-bg: #eaf3f8;
+  --workflow-accent: #315f78;
+  --workflow-text: #21495e;
+}
+
+.workflow-review {
+  --workflow-bg: #fbf2dc;
+  --workflow-accent: #8a5c18;
+  --workflow-text: #67430f;
+}
+
+.workflow-validated {
+  --workflow-bg: #e8f3ec;
+  --workflow-accent: #397052;
+  --workflow-text: #28543d;
+}
+
+.workflow-published {
+  --workflow-bg: #f6ece9;
+  --workflow-accent: var(--terracotta);
+  --workflow-text: var(--terracotta-deep);
+}
+
+.result-card[class*="workflow-"] {
+  border-left: 4px solid var(--workflow-accent);
+  background: var(--workflow-bg);
+}
+
+.result-card[class*="workflow-"]:hover {
+  box-shadow: inset 3px 0 0 var(--workflow-accent);
+}
+
+.result-card[class*="workflow-"] > small {
+  color: var(--workflow-text);
+  font-weight: 750;
 }
 
 .result-card__top {
@@ -651,6 +696,13 @@ button {
   position: relative;
   padding-bottom: 24px;
   border-bottom: 3px solid var(--terracotta);
+}
+
+.entry-header[class*="workflow-"] {
+  padding: 18px 20px 22px;
+  border-left: 5px solid var(--workflow-accent);
+  border-bottom-color: var(--workflow-accent);
+  background: var(--workflow-bg);
 }
 
 .entry-header__meta {

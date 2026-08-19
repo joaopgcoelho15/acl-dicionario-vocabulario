@@ -43,6 +43,13 @@
         <div class="filter-bar"><div class="filters editorial-filters">
           <label><span>Recurso</span><select id="resource-filter"><option value="">Dicionário e Vocabulário</option></select></label><label><span>Workflow</span><select id="workflow-filter"><option value="">Todos</option></select></label><label><span>Estado editorial</span><select id="source-status-filter"><option value="">Todos</option></select></label><label><span>Classe gramatical</span><select id="grammar-filter"><option value="">Todas</option></select></label><label><span>Domínio</span><select id="domain-filter"><option value="">Todos</option></select></label><label><span>Problemas</span><select id="severity-filter"><option value="">Todos</option></select></label><button id="clear-filters" class="clear-filters clear-all" type="button">Limpar tudo</button>
         </div></div>
+        <div class="workflow-legend" aria-label="Legenda das cores do workflow">
+          <span class="workflow-legend__item workflow-imported">Importado</span>
+          <span class="workflow-legend__item workflow-editing">Editado</span>
+          <span class="workflow-legend__item workflow-review">Revisto</span>
+          <span class="workflow-legend__item workflow-validated">Aprovado</span>
+          <span class="workflow-legend__item workflow-published">Publicado</span>
+        </div>
       </section>
       <p id="status" class="workspace-meta" aria-live="polite"></p>
       <div class="workspace-grid editorial-workspace"><aside class="results-panel"><div class="alphabet-guide"><div><strong>Explorar por letra inicial</strong><span id="alphabet-current">A mostrar entradas de todas as letras.</span></div><button id="alphabet-all" class="secondary compact" type="button">Ver todas</button></div><nav id="editorial-alphabet" class="alphabet-index" aria-label="Filtrar entradas pela letra inicial"></nav><div id="entries" class="results-list"></div><button id="load-more-editorial" class="load-more" type="button" hidden>Mostrar mais resultados</button></aside><article id="detail" class="entry-panel"><div class="entry-empty"><span class="entry-empty__mark">Aa</span><h2>Selecione uma entrada</h2><p>Consulte a apresentação pública e entre em modo de edição quando necessário.</p></div></article></div>
