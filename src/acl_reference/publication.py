@@ -127,6 +127,8 @@ def build_release(
             (active_run["id"],),
         )
         for row in rows:
+            if row["workflow_status"] == "REMOVED":
+                continue
             try:
                 export_row = row
                 document = None

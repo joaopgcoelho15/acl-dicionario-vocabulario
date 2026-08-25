@@ -7,12 +7,29 @@
                 <attribute name="status">
                     <choice>
                         <value>imported</value>
+                        <value>draft</value>
                         <value>edited</value>
                         <value>new</value>
                         <value>reviewed</value>
                         <value>validated</value>
+                        <value>needs revision</value>
+                        <value>published</value>
                     </choice>
                 </attribute>
+                <optional>
+                    <attribute name="origin">
+                        <choice>
+                            <value>new</value>
+                            <value>imported</value>
+                            <value>recovered</value>
+                        </choice>
+                    </attribute>
+                </optional>
+                <optional>
+                    <attribute name="transitionedAt">
+                        <data type="dateTime"/>
+                    </attribute>
+                </optional>
             </element>
         </choice>
     </define>

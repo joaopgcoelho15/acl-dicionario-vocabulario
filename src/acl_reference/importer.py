@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
 import hashlib
 import json
 import lzma
@@ -13,6 +14,7 @@ from .editorial_db import connect, initialize
 from .normalization import clean_text, search_key
 from .xml_stream import iter_entry_xml
 from .governance import synchronize_controlled_values
+from .persistence import mark_dataset_synchronized
 
 XML_ID = "{http://www.w3.org/XML/1998/namespace}id"
 XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
@@ -31,6 +33,7 @@ def import_xml(
     *,
     limit: int | None = None,
     batch_size: int = 500,
+    source_label: str | None = None,
 ) -> ImportResult:
     path = Path(source).resolve()
     if not path.is_file():
@@ -46,17 +49,23 @@ def import_xml(
             source_path, source_sha256, source_processing_instructions
         ) VALUES (?, ?, ?)
         """,
-        (str(path), source_sha, json.dumps(processing_instructions(path))),
+        (source_label or str(path), source_sha, json.dumps(processing_instructions(path))),
     )
     run_id = int(cursor.lastrowid)
     connection.commit()
     imported = errors = 0
+    seen_public_ids: set[str] = set()
     try:
         for ordinal, fragment in enumerate(iter_entry_xml(path), 1):
             if limit is not None and ordinal > limit:
                 break
             try:
+                entry_root = ET.fromstring(fragment)
+                public_id = entry_root.get(XML_ID) or f"generated-{ordinal}"
+                if public_id in seen_public_ids:
+                    raise ValueError(f"identificador repetido: {public_id}")
                 _insert_entry(connection, run_id, ordinal, fragment)
+                seen_public_ids.add(public_id)
                 imported += 1
             except (ET.ParseError, ValueError, sqlite3.Error) as exc:
                 errors += 1
@@ -70,6 +79,20 @@ def import_xml(
                 )
             if ordinal % batch_size == 0:
                 connection.commit()
+        if errors:
+            connection.execute(
+                """
+                UPDATE import_runs
+                   SET finished_at=CURRENT_TIMESTAMP, entry_count=?, error_count=?,
+                       status='failed', is_active=0
+                 WHERE id=?
+                """,
+                (imported, errors, run_id),
+            )
+            connection.commit()
+            raise ValueError(
+                f"A importação contém {errors} entradas inválidas; os dados existentes foram preservados."
+            )
         connection.execute("UPDATE import_runs SET is_active = 0")
         connection.execute(
             """
@@ -83,6 +106,9 @@ def import_xml(
         connection.commit()
         connection.close()
         synchronize_controlled_values(db_path)
+        mark_dataset_synchronized(
+            db_path, source_path=source_label or path, source_sha256=source_sha
+        )
         connection = None
         return ImportResult(run_id, imported, errors)
     except Exception:
@@ -102,8 +128,99 @@ def import_xml(
             connection.close()
 
 
+def import_xml_batch(
+    source: str | Path,
+    db_path: str | Path,
+    *,
+    actor: str,
+) -> ImportResult:
+    """Acrescenta apenas entradas novas ao conjunto ativo, numa transação única."""
+    path = Path(source).resolve()
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    initialize(db_path)
+    fragments = list(iter_entry_xml(path))
+    if not fragments:
+        raise ValueError("O lote não contém entradas TEI/XML.")
+    parsed_ids: list[str] = []
+    for ordinal, fragment in enumerate(fragments, 1):
+        root = ET.fromstring(fragment)
+        if _local(root.tag) != "entry":
+            raise ValueError(f"O elemento {ordinal} do lote não é uma entrada.")
+        parsed_ids.append(root.get(XML_ID) or f"generated-batch-{ordinal}")
+    duplicates = sorted(value for value, count in Counter(parsed_ids).items() if count > 1)
+    if duplicates:
+        raise ValueError(
+            "O lote repete identificadores: " + ", ".join(duplicates[:5])
+        )
+    source_sha = _file_sha256(path)
+    with connect(db_path) as connection:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            run = connection.execute(
+                "SELECT id FROM import_runs WHERE is_active=1 LIMIT 1"
+            ).fetchone()
+            if run is None:
+                raise ValueError(
+                    "Execute primeiro uma importação inicial do ficheiro canónico."
+                )
+            existing_ids = {
+                row["public_id"] for row in connection.execute(
+                    "SELECT public_id FROM entries WHERE import_run_id=?", (run["id"],)
+                )
+            }
+            existing = sorted(existing_ids.intersection(parsed_ids))
+            if existing:
+                raise ValueError(
+                    "O lote contém identificadores que já existem: "
+                    + ", ".join(existing[:5])
+                )
+            start = int(connection.execute(
+                "SELECT COALESCE(MAX(source_ordinal),0) FROM entries WHERE import_run_id=?",
+                (run["id"],),
+            ).fetchone()[0])
+            for position, fragment in enumerate(fragments, 1):
+                _insert_entry(
+                    connection, run["id"], start + position, fragment,
+                    workflow_actor=actor,
+                )
+            connection.execute(
+                "UPDATE import_runs SET entry_count=entry_count+? WHERE id=?",
+                (len(fragments), run["id"]),
+            )
+            connection.execute(
+                """
+                UPDATE dataset_persistence
+                   SET working_revision=working_revision+1,
+                       has_unsaved_changes=1,updated_at=CURRENT_TIMESTAMP
+                 WHERE id=1
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_events(event_type,actor,resulting_state,comment,details_json)
+                VALUES('BATCH_IMPORT',?,'DRAFT',?,?)
+                """,
+                (
+                    actor,
+                    f"Importação adicional de {len(fragments)} entradas",
+                    json.dumps(
+                        {"source": str(path), "sha256": source_sha, "entries": len(fragments)},
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+    synchronize_controlled_values(db_path)
+    return ImportResult(int(run["id"]), len(fragments), 0)
+
+
 def _insert_entry(
-    connection: sqlite3.Connection, run_id: int, ordinal: int, fragment: str
+    connection: sqlite3.Connection, run_id: int, ordinal: int, fragment: str,
+    *, workflow_actor: str = "system.import",
 ) -> None:
     root = ET.fromstring(fragment)
     if _local(root.tag) != "entry":
@@ -120,8 +237,8 @@ def _insert_entry(
         INSERT INTO entries(
             import_run_id, source_ordinal, public_id, resource, lemma,
             lemma_normalized, grammatical_info, editorial_status, raw_xml,
-            raw_sha256, imported_raw_sha256
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            raw_sha256, imported_raw_sha256, workflow_actor
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -135,6 +252,7 @@ def _insert_entry(
             fragment,
             raw_sha,
             raw_sha,
+            workflow_actor,
         ),
     )
     entry_id = int(entry_cursor.lastrowid)

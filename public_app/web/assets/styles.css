@@ -538,6 +538,11 @@ button {
   text-align: left;
 }
 
+.filters select option:disabled {
+  color: #999;
+  font-style: italic;
+}
+
 .result-card:hover {
   background: #faf7f5;
 }
@@ -548,22 +553,31 @@ button {
 }
 
 /* A mesma paleta acompanha uma entrada durante todo o workflow editorial. */
-.workflow-imported {
+.workflow-imported,
+.workflow-draft {
   --workflow-bg: #f1f1ef;
   --workflow-accent: #756f6b;
   --workflow-text: #484340;
 }
 
-.workflow-editing {
+.workflow-editing,
+.workflow-edited {
   --workflow-bg: #eaf3f8;
   --workflow-accent: #315f78;
   --workflow-text: #21495e;
 }
 
-.workflow-review {
+.workflow-review,
+.workflow-reviewed {
   --workflow-bg: #fbf2dc;
   --workflow-accent: #8a5c18;
   --workflow-text: #67430f;
+}
+
+.workflow-needs-revision {
+  --workflow-bg: #f9e9e7;
+  --workflow-accent: #9d3636;
+  --workflow-text: #752424;
 }
 
 .workflow-validated {
@@ -576,6 +590,12 @@ button {
   --workflow-bg: #f6ece9;
   --workflow-accent: var(--terracotta);
   --workflow-text: var(--terracotta-deep);
+}
+
+.workflow-removed {
+  --workflow-bg: #e8e6e4;
+  --workflow-accent: #403b38;
+  --workflow-text: #292624;
 }
 
 .result-card[class*="workflow-"] {

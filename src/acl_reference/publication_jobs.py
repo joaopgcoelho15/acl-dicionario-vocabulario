@@ -23,7 +23,7 @@ from .publication import (
 
 
 class PublicationJobManager:
-    """Orquestra preparação, aprovação, publicação e reversão separadas."""
+    """Publica numa só operação funcional, preservando as etapas técnicas internas."""
 
     def __init__(
         self,
@@ -77,6 +77,21 @@ class PublicationJobManager:
             release_id=release_id,
             message="A construir e validar a versão candidata…",
             target=self._prepare,
+            args=(release_id, actor, description),
+        )
+        return self.status()
+
+    def publish_selected(self, *, actor: str, description: str = "") -> dict:
+        self.governance.require_user(actor, {"approver", "administrator"})
+        valid, message = self.editorial.can_publish(require_selection=True)
+        if not valid:
+            raise ValueError(message)
+        release_id = datetime.now(timezone.utc).strftime("local-%Y%m%d-%H%M%S")
+        self._start(
+            operation="publish",
+            release_id=release_id,
+            message="A validar e publicar as entradas selecionadas…",
+            target=self._prepare_and_publish,
             args=(release_id, actor, description),
         )
         return self.status()
@@ -194,6 +209,34 @@ class PublicationJobManager:
         except Exception as exc:
             self._failed(exc)
 
+    def _prepare_and_publish(
+        self, release_id: str, actor: str, description: str
+    ) -> None:
+        try:
+            self._phase("prepare", "A construir a versão técnica…")
+            build_release(
+                self.db_path,
+                self.releases_root,
+                release_id=release_id,
+                images_root=self.images_root,
+                prepared_by=actor,
+                description=description or "Publicação editorial",
+                rng_path=self.rng_path,
+                selection_mode=True,
+            )
+            self._phase("approve", "A confirmar a integridade da versão…")
+            approve_release(
+                self.db_path,
+                self.releases_root,
+                release_id,
+                actor=actor,
+                comment="Aprovação integrada na publicação",
+            )
+        except Exception as exc:
+            self._failed(exc)
+            return
+        self._publish(release_id, actor, False, description)
+
     def _publish(
         self, release_id: str, actor: str, rollback: bool, comment: str
     ) -> None:
@@ -241,7 +284,7 @@ class PublicationJobManager:
             )
             pointer_activated = True
             if not rollback:
-                self.editorial.mark_published(release_id)
+                self.editorial.mark_published(release_id, actor=actor)
             with connect(self.db_path) as connection:
                 connection.execute(
                     """

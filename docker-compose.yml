@@ -77,7 +77,7 @@ services:
       - --base-path
       - ${EDITORIAL_BASE_PATH:-/dicionario-vocabulario/editor}
       - --password
-      - ${EDITORIAL_PASSWORD:-ACL}
+      - ${EDITORIAL_PASSWORD:?Defina EDITORIAL_PASSWORD no ficheiro .env}
       - --meili-url
       - http://meilisearch:7700
       - --meili-key

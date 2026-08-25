@@ -51,19 +51,21 @@ Com a configuração de produção, os endereços são:
 - `https://iris.sysresearch.org/dicionario-vocabulario/`;
 - `https://iris.sysresearch.org/dicionario-vocabulario/editor/`.
 
-O editor usa autenticação HTTP Basic. A configuração provisória pedida é
-utilizador `acl` e palavra-passe `ACL`; deve ser substituída antes de uma
-utilização institucional prolongada.
+O editor usa temporariamente autenticação HTTP Basic. A palavra-passe real é
+definida apenas no `.env` do servidor e nunca é guardada no Git. O ficheiro
+`.env.example` contém exclusivamente placeholders.
 
 O editor permite alterar lema, formas, classe, estado, definições, marcas e
 remissões. Preserva revisões, identifica o responsável e implementa o workflow
-`IMPORTED → EDITING → REVIEW → VALIDATED`. Inclui filtros editoriais,
-listas controladas, validação Relax NG e reposição de revisões.
+`DRAFT → EDITED → REVIEWED → VALIDATED → PUBLISHED`, incluindo pedido de
+revisão, remoção e recuperação. Inclui filtros editoriais, listas
+controladas, validação Relax NG, auditoria e reposição de revisões.
 
-A publicação separa preparação, aprovação e ativação. A publicação e a
-reversão constroem índices versionados, verificam contagens e pesquisa antes da
-troca atómica e só depois mudam o apontador ativo. A CLI e a interface usam o
-mesmo workflow e as mesmas regras de papéis.
+Na interface, o aprovador publica a seleção numa única ação. Internamente, a
+publicação e a reversão constroem índices versionados, verificam integridade,
+contagens e pesquisa antes da troca atómica e só depois mudam o apontador
+ativo. A base SQLite é a versão de trabalho; **Guardar TEI/XML** cria uma
+salvaguarda canónica completa e o respetivo log apenas quando solicitado.
 
 ## Interfaces locais
 
@@ -97,6 +99,8 @@ python3 -m acl_reference acceptance-test --base-url http://127.0.0.1:8090
 
 Consultar `docs/PHASE1_REQUIREMENTS.md` e `docs/EDITORIAL_WORKFLOW.md`.
 Para publicação no IRIS, consultar `docs/DEPLOYMENT_IRIS.md`.
+Para a separação entre software, dados e segredos, bem como para o processo de
+backup e restauro, consultar `docs/GITHUB_REPOSITORIES.md`.
 
 ## Segurança da versão anterior
 

@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import threading
 import xml.etree.ElementTree as ET
 
 from .editorial_db import connect, initialize, transaction
@@ -12,16 +13,36 @@ from .governance import GovernanceService, refresh_controlled_values
 from .normalization import search_key
 from .public_document import build_public_document
 from .labels import domain_label, grammar_label, status_label
+from .persistence import persistence_status, save_canonical_xml
 
 XML_ID = "{http://www.w3.org/XML/1998/namespace}id"
 TEI = "http://www.tei-c.org/ns/1.0"
 DACL = "http://dacl.zbr.pt/annotations"
-WORKFLOW_TRANSITIONS = {
-    "IMPORTED": {"EDITING"},
-    "EDITING": {"REVIEW"},
-    "REVIEW": {"EDITING", "VALIDATED"},
-    "VALIDATED": {"EDITING"},
-    "PUBLISHED": {"EDITING"},
+WORKFLOW_STATES = {
+    "DRAFT", "EDITED", "REVIEWED", "NEEDS_REVISION",
+    "VALIDATED", "PUBLISHED", "REMOVED",
+}
+ROLE_TRANSITIONS = {
+    "editor": {
+        "DRAFT": {"EDITED", "REMOVED"},
+        "NEEDS_REVISION": {"EDITED"},
+        "REMOVED": {"DRAFT"},
+    },
+    "reviewer": {
+        "DRAFT": {"EDITED", "REVIEWED", "REMOVED"},
+        "EDITED": {"NEEDS_REVISION", "REVIEWED", "REMOVED"},
+        "NEEDS_REVISION": {"EDITED", "REVIEWED"},
+        "REMOVED": {"DRAFT"},
+    },
+    "approver": {
+        "DRAFT": {"EDITED", "REVIEWED", "VALIDATED", "REMOVED"},
+        "EDITED": {"NEEDS_REVISION", "REVIEWED", "VALIDATED", "REMOVED"},
+        "REVIEWED": {"NEEDS_REVISION", "VALIDATED", "REMOVED"},
+        "NEEDS_REVISION": {"EDITED", "REVIEWED", "VALIDATED", "REMOVED"},
+        "VALIDATED": {"NEEDS_REVISION", "REMOVED"},
+        "PUBLISHED": {"NEEDS_REVISION", "REMOVED"},
+        "REMOVED": {"DRAFT"},
+    },
 }
 
 
@@ -42,10 +63,13 @@ class InvalidWorkflow(EditorialError):
 
 
 class EditorialService:
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, exports_root: str | Path | None = None):
         self.db_path = Path(db_path)
+        self.exports_root = Path(exports_root or (self.db_path.parent / "exports"))
         initialize(self.db_path)
         self.governance = GovernanceService(self.db_path)
+        self._facet_index = None
+        self._facet_index_lock = threading.Lock()
 
     def overview(self) -> dict:
         with connect(self.db_path) as connection:
@@ -186,6 +210,64 @@ class EditorialService:
             "filter_options": filter_options,
             "filter_counts": filter_counts,
             "controlled_options": controlled_options,
+            "persistence": persistence_status(self.db_path),
+        }
+
+    def warm_entry_facets(self) -> None:
+        """Prepara em segundo plano o índice de interseções dos filtros."""
+        with connect(self.db_path) as connection:
+            run = self._active_run(connection)
+            if run is not None:
+                self._cached_entry_facets(
+                    connection,
+                    run,
+                    resource=None,
+                    workflow=None,
+                    editorial_status=None,
+                    grammar=None,
+                    domain=None,
+                    severity=None,
+                )
+
+    def save_canonical(self, *, actor: str, rng_path: str | Path | None = None) -> dict:
+        self.governance.require_user(
+            actor, {"editor", "reviewer", "approver", "administrator"}
+        )
+        return save_canonical_xml(
+            self.db_path, self.exports_root, actor=actor, rng_path=rng_path
+        )
+
+    def audit_report(self) -> dict:
+        with connect(self.db_path) as connection:
+            run = self._active_run(connection)
+            run_id = run["id"] if run else -1
+            states = [dict(row) for row in connection.execute(
+                "SELECT workflow_status AS value,COUNT(*) AS count FROM entries WHERE import_run_id=? GROUP BY workflow_status ORDER BY workflow_status",
+                (run_id,),
+            )]
+            resources = [dict(row) for row in connection.execute(
+                "SELECT resource AS value,COUNT(*) AS count FROM entries WHERE import_run_id=? GROUP BY resource ORDER BY resource",
+                (run_id,),
+            )]
+            issues = [dict(row) for row in connection.execute(
+                "SELECT severity AS value,COUNT(*) AS count FROM validation_issues WHERE import_run_id=? GROUP BY severity ORDER BY severity",
+                (run_id,),
+            )]
+            events = [dict(row) for row in connection.execute(
+                "SELECT * FROM audit_events ORDER BY id DESC LIMIT 200"
+            )]
+            releases = [dict(row) for row in connection.execute(
+                "SELECT release_id,state,created_at,activated_at,description,prepared_by,approved_by FROM releases ORDER BY created_at DESC LIMIT 50"
+            )]
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "active_import": dict(run) if run else None,
+            "persistence": persistence_status(self.db_path),
+            "states": states,
+            "resources": resources,
+            "validation_issues": issues,
+            "recent_events": events,
+            "releases": releases,
         }
 
     def list_entries(
@@ -207,51 +289,74 @@ class EditorialService:
         with connect(self.db_path) as connection:
             run = self._active_run(connection)
             if run is None:
-                return {"total": 0, "items": []}
-            params: list[object] = [run["id"]]
-            conditions: list[str] = []
-            if normalized:
-                conditions.append("lemma_normalized >= ? AND lemma_normalized < ?")
-                params.extend((normalized, normalized + "\uffff"))
-            filters = (
-                ("resource", resource, {"dictionary", "vocabulary"}),
-                (
-                    "workflow_status",
-                    workflow_status.upper() if workflow_status else None,
-                    set(WORKFLOW_TRANSITIONS),
-                ),
-                ("editorial_status", editorial_status, None),
-                ("grammatical_info", grammar, None),
+                return {"total": 0, "items": [], "facets": {}}
+
+            workflow_value = workflow_status.upper() if workflow_status else None
+            if resource and resource not in {"dictionary", "vocabulary"}:
+                raise EditorialError("Filtro resource inválido.")
+            if workflow_value and workflow_value not in WORKFLOW_STATES:
+                raise EditorialError("Filtro workflow_status inválido.")
+            if severity and severity not in {"error", "warning", "info"}:
+                raise EditorialError("Severidade inválida.")
+
+            def where_without(skipped: str | None = None):
+                params: list[object] = [run["id"]]
+                conditions: list[str] = []
+                if normalized:
+                    conditions.append(
+                        "entries.lemma_normalized >= ? AND entries.lemma_normalized < ?"
+                    )
+                    params.extend((normalized, normalized + "\uffff"))
+                for name, column, value in (
+                    ("resource", "resource", resource),
+                    ("workflow", "workflow_status", workflow_value),
+                    ("editorial_status", "editorial_status", editorial_status),
+                    ("grammar", "grammatical_info", grammar),
+                ):
+                    if value and skipped != name:
+                        conditions.append(f"entries.{column}=?")
+                        params.append(value)
+                if domain and skipped != "domain":
+                    conditions.append(
+                        "entries.id IN (SELECT labels.entry_id FROM labels "
+                        "WHERE labels.label_type IN ('domain','dom') AND labels.value=?)"
+                    )
+                    params.append(domain)
+                if severity and skipped != "severity":
+                    conditions.append(
+                        "entries.id IN (SELECT vi.entry_id FROM validation_issues vi "
+                        "WHERE vi.severity=?)"
+                    )
+                    params.append(severity)
+                condition = " AND " + " AND ".join(conditions) if conditions else ""
+                return condition, params
+
+            condition, params = where_without()
+            active_filters = any(
+                (resource, workflow_value, editorial_status, grammar, domain, severity)
             )
-            for column, value, allowed in filters:
-                if value:
-                    if allowed and value not in allowed:
-                        raise EditorialError(f"Filtro {column} inválido.")
-                    conditions.append(f"entries.{column}=?")
-                    params.append(value)
-            if domain:
-                conditions.append(
-                    "entries.id IN (SELECT labels.entry_id FROM labels "
-                    "WHERE labels.label_type IN ('domain','dom') AND labels.value=?)"
+            cached_facets = None
+            if active_filters and not normalized:
+                cached_facets, total = self._cached_entry_facets(
+                    connection,
+                    run,
+                    resource=resource,
+                    workflow=workflow_value,
+                    editorial_status=editorial_status,
+                    grammar=grammar,
+                    domain=domain,
+                    severity=severity,
                 )
-                params.append(domain)
-            if severity:
-                if severity not in {"error", "warning", "info"}:
-                    raise EditorialError("Severidade inválida.")
-                conditions.append(
-                    "entries.id IN (SELECT vi.entry_id FROM validation_issues vi "
-                    "WHERE vi.severity=?)"
-                )
-                params.append(severity)
-            condition = " AND " + " AND ".join(conditions) if conditions else ""
-            total = connection.execute(
-                f"SELECT COUNT(*) FROM entries WHERE import_run_id=? {condition}",
-                params,
-            ).fetchone()[0]
+            else:
+                total = connection.execute(
+                    f"SELECT COUNT(*) FROM entries WHERE import_run_id=? {condition}",
+                    params,
+                ).fetchone()[0]
             rows = connection.execute(
                 f"""
                 SELECT id, public_id, resource, lemma, grammatical_info,
-                       editorial_status, workflow_status, raw_sha256,
+                       editorial_status, workflow_status, workflow_origin,
+                       workflow_actor, raw_sha256,
                        updated_at,
                        (SELECT COUNT(*) FROM validation_issues vi
                          WHERE vi.entry_id=entries.id AND vi.severity='error'
@@ -280,7 +385,173 @@ class EditorialService:
                 """,
                 [*params, limit, offset],
             ).fetchall()
-        return {"total": total, "items": [dict(row) for row in rows]}
+
+            if cached_facets is not None:
+                facets = cached_facets
+            else:
+                facets = {}
+                for name, column in (
+                    ("resource", "resource"),
+                    ("workflow", "workflow_status"),
+                    ("editorial_statuses", "editorial_status"),
+                    ("grammar", "grammatical_info"),
+                ):
+                    skipped = "editorial_status" if name == "editorial_statuses" else name
+                    facet_condition, facet_params = where_without(skipped)
+                    facets[name] = [
+                        dict(row)
+                        for row in connection.execute(
+                            f"""
+                            SELECT entries.{column} AS value, COUNT(*) AS count
+                              FROM entries
+                             WHERE import_run_id=? {facet_condition}
+                               AND NULLIF(TRIM(entries.{column}),'') IS NOT NULL
+                             GROUP BY entries.{column}
+                             ORDER BY entries.{column} COLLATE NOCASE
+                            """,
+                            facet_params,
+                        )
+                    ]
+
+                domain_condition, domain_params = where_without("domain")
+                facets["domains"] = [
+                    dict(row)
+                    for row in connection.execute(
+                        f"""
+                        SELECT labels.value AS value,
+                               COUNT(DISTINCT entries.id) AS count
+                          FROM entries
+                          JOIN labels ON labels.entry_id=entries.id
+                         WHERE entries.import_run_id=? {domain_condition}
+                           AND labels.label_type IN ('domain','dom')
+                         GROUP BY labels.value
+                         ORDER BY labels.value COLLATE NOCASE
+                        """,
+                        domain_params,
+                    )
+                ]
+                severity_condition, severity_params = where_without("severity")
+                facets["severity"] = [
+                    dict(row)
+                    for row in connection.execute(
+                        f"""
+                        SELECT vi.severity AS value,
+                               COUNT(DISTINCT entries.id) AS count
+                          FROM entries
+                          JOIN validation_issues vi ON vi.entry_id=entries.id
+                         WHERE entries.import_run_id=? {severity_condition}
+                         GROUP BY vi.severity
+                         ORDER BY vi.severity
+                        """,
+                        severity_params,
+                    )
+                ]
+        return {
+            "total": total,
+            "items": [dict(row) for row in rows],
+            "facets": facets,
+        }
+
+    def _cached_entry_facets(self, connection, run, **selected) -> dict:
+        signature_row = connection.execute(
+            """
+            SELECT
+              COALESCE((SELECT MAX(id) FROM audit_events),0),
+              COALESCE((SELECT MAX(id) FROM validation_issues),0),
+              (SELECT COUNT(*) FROM validation_issues),
+              (SELECT COUNT(*) FROM entries WHERE import_run_id=?)
+            """,
+            (run["id"],),
+        ).fetchone()
+        signature = (run["id"], *tuple(signature_row))
+        with self._facet_index_lock:
+            if not self._facet_index or self._facet_index["signature"] != signature:
+                dimensions = {
+                    name: {}
+                    for name in (
+                        "resource", "workflow", "editorial_status",
+                        "grammar", "domain", "severity",
+                    )
+                }
+
+                def add(name, value, entry_id):
+                    if value:
+                        dimensions[name].setdefault(value, set()).add(entry_id)
+
+                universe = set()
+                for row in connection.execute(
+                    """
+                    SELECT id,resource,workflow_status,editorial_status,
+                           grammatical_info
+                      FROM entries WHERE import_run_id=?
+                    """,
+                    (run["id"],),
+                ):
+                    entry_id = row["id"]
+                    universe.add(entry_id)
+                    add("resource", row["resource"], entry_id)
+                    add("workflow", row["workflow_status"], entry_id)
+                    add("editorial_status", row["editorial_status"], entry_id)
+                    add("grammar", row["grammatical_info"], entry_id)
+                for row in connection.execute(
+                    """
+                    SELECT labels.entry_id,labels.value
+                      FROM labels JOIN entries ON entries.id=labels.entry_id
+                     WHERE entries.import_run_id=?
+                       AND labels.label_type IN ('domain','dom')
+                    """,
+                    (run["id"],),
+                ):
+                    add("domain", row["value"], row["entry_id"])
+                for row in connection.execute(
+                    """
+                    SELECT vi.entry_id,vi.severity
+                      FROM validation_issues vi
+                      JOIN entries ON entries.id=vi.entry_id
+                     WHERE entries.import_run_id=?
+                    """,
+                    (run["id"],),
+                ):
+                    add("severity", row["severity"], row["entry_id"])
+                self._facet_index = {
+                    "signature": signature,
+                    "universe": universe,
+                    "dimensions": dimensions,
+                }
+
+            index = self._facet_index
+            output = {}
+            response_names = {
+                "resource": "resource",
+                "workflow": "workflow",
+                "editorial_status": "editorial_statuses",
+                "grammar": "grammar",
+                "domain": "domains",
+                "severity": "severity",
+            }
+            for dimension, values in index["dimensions"].items():
+                matching = index["universe"]
+                for other, selected_value in selected.items():
+                    if other != dimension and selected_value:
+                        matching = matching & index["dimensions"][other].get(
+                            selected_value, set()
+                        )
+                        if not matching:
+                            break
+                output[response_names[dimension]] = [
+                    {"value": value, "count": len(matching & entry_ids)}
+                    for value, entry_ids in values.items()
+                    if matching & entry_ids
+                ]
+            matching_all = index["universe"]
+            for dimension, selected_value in selected.items():
+                if selected_value:
+                    matching_all = matching_all & index["dimensions"][dimension].get(
+                        selected_value, set()
+                    )
+                    if not matching_all:
+                        break
+            return output, len(matching_all)
 
     def get_entry(self, public_id: str) -> dict:
         with connect(self.db_path) as connection:
@@ -355,27 +626,36 @@ class EditorialService:
             run = self._active_run(connection)
             if run is None:
                 return {"total": 0, "selected": 0, "items": []}
+            ready_condition = """
+                e.import_run_id=? AND (
+                    e.workflow_status='VALIDATED' OR (
+                        e.workflow_status='REMOVED' AND EXISTS (
+                            SELECT 1 FROM published_entry_snapshots pes WHERE pes.entry_id=e.id
+                        )
+                    )
+                )
+            """
             total = connection.execute(
-                "SELECT COUNT(*) FROM entries WHERE import_run_id=? AND workflow_status='VALIDATED'",
+                f"SELECT COUNT(*) FROM entries e WHERE {ready_condition}",
                 (run["id"],),
             ).fetchone()[0]
             selected = connection.execute(
                 """
                 SELECT COUNT(*) FROM publication_selections ps
                 JOIN entries e ON e.id=ps.entry_id
-                WHERE e.import_run_id=? AND e.workflow_status='VALIDATED'
+                WHERE e.import_run_id=? AND e.workflow_status IN ('VALIDATED','REMOVED')
                 """,
                 (run["id"],),
             ).fetchone()[0]
             rows = connection.execute(
                 """
                 SELECT e.id,e.public_id,e.resource,e.lemma,e.grammatical_info,
-                       e.editorial_status,e.updated_at,
+                       e.editorial_status,e.workflow_status,e.updated_at,
                        CASE WHEN ps.entry_id IS NULL THEN 0 ELSE 1 END AS selected
                 FROM entries e LEFT JOIN publication_selections ps ON ps.entry_id=e.id
-                WHERE e.import_run_id=? AND e.workflow_status='VALIDATED'
+                WHERE {ready_condition}
                 ORDER BY e.lemma_normalized,e.source_ordinal LIMIT ? OFFSET ?
-                """,
+                """.format(ready_condition=ready_condition),
                 (run["id"], limit, offset),
             ).fetchall()
         return {"total": total, "selected": selected, "items": [dict(row) for row in rows]}
@@ -395,8 +675,10 @@ class EditorialService:
             ).fetchall()
             if len(rows) != len(set(clean_ids)):
                 raise EditorialError("Uma ou mais entradas selecionadas não existem.")
-            if selected and any(row["workflow_status"] != "VALIDATED" for row in rows):
-                raise InvalidWorkflow("Só podem entrar em publicação entradas validadas.")
+            if selected and any(row["workflow_status"] not in {"VALIDATED", "REMOVED"} for row in rows):
+                raise InvalidWorkflow(
+                    "Só podem entrar em publicação entradas validadas ou remoções pendentes."
+                )
             for row in rows:
                 if selected:
                     connection.execute(
@@ -417,7 +699,7 @@ class EditorialService:
                     VALUES('PUBLICATION_SELECTION',?,?,?,?)
                     """,
                     (actor, row["id"], "selected" if selected else "pending",
-                     "Entrada incluída na próxima candidata" if selected else "Entrada retirada da próxima candidata"),
+                     "Entrada selecionada para publicação" if selected else "Entrada retirada da publicação"),
                 )
         return self.publication_entries()
 
@@ -507,14 +789,14 @@ class EditorialService:
             raw_sha = hashlib.sha256(raw_xml.encode("utf-8")).hexdigest()
             now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
             connection.execute(
-                "UPDATE entries SET raw_xml=?,raw_sha256=?,workflow_status='EDITING',updated_at=? WHERE id=?",
-                (raw_xml, raw_sha, now, row["id"]),
+                "UPDATE entries SET raw_xml=?,raw_sha256=?,workflow_status='EDITED',workflow_actor=?,workflow_updated_at=?,updated_at=? WHERE id=?",
+                (raw_xml, raw_sha, actor, now, now, row["id"]),
             )
             connection.execute("DELETE FROM validation_issues WHERE entry_id=?", (row["id"],))
             connection.execute("DELETE FROM validation_runs WHERE import_run_id=?", (row["import_run_id"],))
             connection.execute(
                 """INSERT INTO audit_events(event_type,actor,entry_id,previous_state,resulting_state,comment,details_json)
-                   VALUES('VALIDATION_AUTO_FIX',?,?,?,'EDITING',?,?)""",
+                   VALUES('VALIDATION_AUTO_FIX',?,?,?,'EDITED',?,?)""",
                 (actor, row["id"], row["workflow_status"], comment or "Normalização TEI", json.dumps({"rule_code": rule_code, "fix_code": fix_code, "occurrences": changed})),
             )
         return self.get_entry(public_id)
@@ -527,6 +809,14 @@ class EditorialService:
         comment = str(payload.get("comment") or "Edição editorial").strip()[:500]
         with transaction(self.db_path) as connection:
             row = self._entry_row(connection, public_id)
+            if row["workflow_status"] == "REMOVED":
+                raise InvalidWorkflow(
+                    "Recupere a entrada apagada antes de a voltar a editar."
+                )
+            if row["workflow_status"] == "PUBLISHED":
+                raise InvalidWorkflow(
+                    "Na área Publicação, devolva primeiro a entrada para revisão."
+                )
             expected = payload.get("expected_updated_at")
             if expected and expected != row["updated_at"]:
                 raise EditConflict(
@@ -590,8 +880,8 @@ class EditorialService:
                 """
                 UPDATE entries
                    SET lemma=?, lemma_normalized=?, grammatical_info=?,
-                       editorial_status=?, workflow_status='EDITING',
-                       raw_xml=?, raw_sha256=?, updated_at=?
+                       editorial_status=?, workflow_status='EDITED', workflow_actor=?,
+                       workflow_updated_at=?, raw_xml=?, raw_sha256=?, updated_at=?
                  WHERE id=?
                 """,
                 (
@@ -599,6 +889,8 @@ class EditorialService:
                     search_key(lemma),
                     grammar,
                     source_status,
+                    actor,
+                    now,
                     raw_xml,
                     raw_sha,
                     now,
@@ -622,7 +914,7 @@ class EditorialService:
                 INSERT INTO audit_events(
                     event_type, actor, entry_id, previous_state,
                     resulting_state, comment, details_json
-                ) VALUES ('ENTRY_EDIT', ?, ?, ?, 'EDITING', ?, ?)
+                ) VALUES ('ENTRY_EDIT', ?, ?, ?, 'EDITED', ?, ?)
                 """,
                 (
                     actor,
@@ -652,21 +944,22 @@ class EditorialService:
         return self.get_entry(public_id)
 
     def set_workflow(
-        self, public_id: str, target: str, *, actor: str, comment: str = ""
+        self, public_id: str, target: str, *, actor: str, comment: str = "",
+        confirmed: bool = False,
     ) -> dict:
         target = target.upper()
-        allowed_roles = (
-            {"reviewer", "approver", "administrator"}
-            if target == "VALIDATED"
-            else {"editor", "reviewer", "approver", "administrator"}
-        )
-        self.governance.require_user(actor, allowed_roles)
+        user = self.governance.require_user(actor)
+        role = "approver" if user["role"] == "administrator" else user["role"]
         with transaction(self.db_path) as connection:
             row = self._entry_row(connection, public_id)
             current = row["workflow_status"]
-            if target not in WORKFLOW_TRANSITIONS.get(current, set()):
+            if target not in ROLE_TRANSITIONS.get(role, {}).get(current, set()):
                 raise InvalidWorkflow(
-                    f"Transição inválida: {current} → {target}."
+                    f"O papel {user['role']} não pode executar a transição {current} → {target}."
+                )
+            if target == "REMOVED" and not confirmed:
+                raise InvalidWorkflow(
+                    "A remoção exige confirmação explícita do utilizador."
                 )
             error_count = connection.execute(
                 """
@@ -683,16 +976,29 @@ class EditorialService:
                 """,
                 (row["id"],),
             ).fetchone()[0]
-            if target in {"REVIEW", "VALIDATED"} and error_count:
+            if target in {"REVIEWED", "VALIDATED"} and error_count:
                 raise InvalidWorkflow(
                     "A entrada tem erros de validação que impedem esta transição."
                 )
             now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
             connection.execute(
-                "UPDATE entries SET workflow_status=?, updated_at=? WHERE id=?",
-                (target, now, row["id"]),
+                """
+                UPDATE entries SET workflow_status=?,
+                       workflow_origin=CASE WHEN ?='DRAFT' THEN 'recovered' ELSE workflow_origin END,
+                       workflow_actor=?,workflow_updated_at=?,updated_at=? WHERE id=?
+                """,
+                (target, target, actor, now, now, row["id"]),
             )
-            if target != "VALIDATED":
+            if target == "REMOVED" and current == "PUBLISHED":
+                connection.execute(
+                    """
+                    INSERT INTO publication_selections(entry_id,selected_by)
+                    VALUES(?,?) ON CONFLICT(entry_id) DO UPDATE SET
+                    selected_by=excluded.selected_by,selected_at=CURRENT_TIMESTAMP
+                    """,
+                    (row["id"], actor),
+                )
+            elif target != "VALIDATED":
                 connection.execute(
                     "DELETE FROM publication_selections WHERE entry_id=?", (row["id"],)
                 )
@@ -749,14 +1055,16 @@ class EditorialService:
             connection.execute(
                 """
                 UPDATE entries SET lemma=?, lemma_normalized=?, grammatical_info=?,
-                       editorial_status=?, workflow_status='EDITING', raw_xml=?,
-                       raw_sha256=?, updated_at=? WHERE id=?
+                       editorial_status=?, workflow_status='EDITED', workflow_actor=?,
+                       workflow_updated_at=?, raw_xml=?, raw_sha256=?, updated_at=? WHERE id=?
                 """,
                 (
                     restored["lemma"],
                     restored["lemma_normalized"],
                     restored["grammatical_info"],
                     restored["editorial_status"],
+                    actor,
+                    now,
                     restored["raw_xml"],
                     restored["raw_sha256"],
                     now,
@@ -771,7 +1079,7 @@ class EditorialService:
                 INSERT INTO audit_events(
                     event_type, actor, entry_id, previous_state,
                     resulting_state, comment, details_json
-                ) VALUES ('REVISION_RESTORE', ?, ?, ?, 'EDITING', ?, ?)
+                ) VALUES ('REVISION_RESTORE', ?, ?, ?, 'EDITED', ?, ?)
                 """,
                 (
                     actor,
@@ -783,8 +1091,11 @@ class EditorialService:
             )
         return self.get_entry(public_id)
 
-    def mark_published(self, release_id: str | None = None) -> None:
+    def mark_published(
+        self, release_id: str | None = None, *, actor: str = "system.publish"
+    ) -> None:
         with transaction(self.db_path) as connection:
+            now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
             if release_id:
                 rows = connection.execute(
                     """
@@ -794,6 +1105,12 @@ class EditorialService:
                     (release_id,),
                 ).fetchall()
                 for row in rows:
+                    if row["workflow_status"] == "REMOVED":
+                        connection.execute(
+                            "DELETE FROM published_entry_snapshots WHERE entry_id=?",
+                            (row["id"],),
+                        )
+                        continue
                     document = build_public_document(row, connection, release_id)
                     connection.execute(
                         """
@@ -808,10 +1125,12 @@ class EditorialService:
                     )
                 connection.execute(
                     """
-                    UPDATE entries SET workflow_status='PUBLISHED'
-                     WHERE id IN (SELECT entry_id FROM release_entries WHERE release_id=?)
+                    UPDATE entries SET workflow_status='PUBLISHED',
+                           workflow_actor=?,workflow_updated_at=?,updated_at=?
+                     WHERE workflow_status='VALIDATED'
+                       AND id IN (SELECT entry_id FROM release_entries WHERE release_id=?)
                     """,
-                    (release_id,),
+                    (actor, now, now, release_id),
                 )
                 connection.execute(
                     "DELETE FROM publication_selections WHERE entry_id IN (SELECT entry_id FROM release_entries WHERE release_id=?)",
@@ -819,7 +1138,8 @@ class EditorialService:
                 )
             else:
                 connection.execute(
-                    "UPDATE entries SET workflow_status='PUBLISHED' WHERE workflow_status='VALIDATED'"
+                    "UPDATE entries SET workflow_status='PUBLISHED',workflow_actor=?,workflow_updated_at=?,updated_at=? WHERE workflow_status='VALIDATED'",
+                    (actor, now, now),
                 )
 
     def can_publish(self, *, require_selection: bool = False) -> tuple[bool, str | None]:
@@ -832,7 +1152,7 @@ class EditorialService:
                 SELECT COUNT(*) FROM validation_issues vi
                 LEFT JOIN entries e ON e.id=vi.entry_id
                 JOIN publication_selections ps ON ps.entry_id=vi.entry_id
-                WHERE vi.severity='error' AND NOT EXISTS (
+                WHERE vi.severity='error' AND e.workflow_status<>'REMOVED' AND NOT EXISTS (
                     SELECT 1 FROM validation_waivers vw
                      WHERE vw.entry_id=vi.entry_id
                        AND vw.rule_code=vi.rule_code
@@ -844,7 +1164,7 @@ class EditorialService:
             invalid = connection.execute(
                 """
                 SELECT COUNT(*) FROM publication_selections ps JOIN entries e ON e.id=ps.entry_id
-                 WHERE e.workflow_status<>'VALIDATED'
+                 WHERE e.workflow_status NOT IN ('VALIDATED','REMOVED')
                 """
             ).fetchone()[0]
             if not require_selection:
@@ -859,10 +1179,10 @@ class EditorialService:
                     """
                 ).fetchone()[0]
                 invalid = connection.execute(
-                    "SELECT COUNT(*) FROM entries WHERE workflow_status IN ('EDITING','REVIEW')"
+                    "SELECT COUNT(*) FROM entries WHERE workflow_status IN ('EDITED','REVIEWED','NEEDS_REVISION')"
                 ).fetchone()[0]
         if require_selection and not selected:
-            return False, "Selecione pelo menos uma entrada validada para a candidata."
+            return False, "Selecione pelo menos uma entrada validada ou remoção pendente."
         if errors:
             return False, f"Existem {errors} erros de validação."
         if invalid:

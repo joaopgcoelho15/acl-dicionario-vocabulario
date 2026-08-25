@@ -35,7 +35,10 @@ CREATE TABLE IF NOT EXISTS entries (
     lemma_normalized TEXT NOT NULL,
     grammatical_info TEXT,
     editorial_status TEXT,
-    workflow_status TEXT NOT NULL DEFAULT 'IMPORTED',
+    workflow_status TEXT NOT NULL DEFAULT 'DRAFT',
+    workflow_origin TEXT NOT NULL DEFAULT 'imported',
+    workflow_actor TEXT NOT NULL DEFAULT 'system.import',
+    workflow_updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     raw_xml TEXT NOT NULL,
     raw_sha256 TEXT NOT NULL,
     imported_raw_sha256 TEXT,
@@ -230,6 +233,20 @@ CREATE TABLE IF NOT EXISTS audit_events (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS dataset_persistence (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    working_revision INTEGER NOT NULL DEFAULT 0,
+    saved_revision INTEGER NOT NULL DEFAULT 0,
+    has_unsaved_changes INTEGER NOT NULL DEFAULT 0 CHECK (has_unsaved_changes IN (0, 1)),
+    last_saved_at TEXT,
+    last_saved_path TEXT,
+    last_saved_sha256 TEXT,
+    last_saved_event_id INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT OR IGNORE INTO dataset_persistence(id) VALUES(1);
+
 CREATE TABLE IF NOT EXISTS validation_runs (
     id INTEGER PRIMARY KEY,
     import_run_id INTEGER NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE,
@@ -329,13 +346,58 @@ def _initialize_once(path: str | Path) -> None:
             connection.execute(
                 """
                 ALTER TABLE entries
-                ADD COLUMN workflow_status TEXT NOT NULL DEFAULT 'IMPORTED'
+                ADD COLUMN workflow_status TEXT NOT NULL DEFAULT 'DRAFT'
                 """
             )
+        if "workflow_origin" not in columns:
+            connection.execute(
+                "ALTER TABLE entries ADD COLUMN workflow_origin TEXT NOT NULL DEFAULT 'imported'"
+            )
+        if "workflow_actor" not in columns:
+            connection.execute(
+                "ALTER TABLE entries ADD COLUMN workflow_actor TEXT NOT NULL DEFAULT 'system.import'"
+            )
+        if "workflow_updated_at" not in columns:
+            connection.execute(
+                "ALTER TABLE entries ADD COLUMN workflow_updated_at TEXT"
+            )
+            connection.execute(
+                "UPDATE entries SET workflow_updated_at=COALESCE(updated_at,CURRENT_TIMESTAMP)"
+            )
+        connection.execute(
+            """
+            UPDATE entries SET
+                workflow_origin=CASE
+                    WHEN workflow_status='IMPORTED' THEN 'imported'
+                    ELSE COALESCE(NULLIF(workflow_origin,''),'imported')
+                END,
+                workflow_status=CASE workflow_status
+                    WHEN 'IMPORTED' THEN 'DRAFT'
+                    WHEN 'EDITING' THEN 'EDITED'
+                    WHEN 'REVIEW' THEN 'REVIEWED'
+                    ELSE workflow_status
+                END
+            WHERE workflow_status IN ('IMPORTED','EDITING','REVIEW')
+               OR NULLIF(workflow_origin,'') IS NULL
+            """
+        )
         if "imported_raw_sha256" not in columns:
             connection.execute("ALTER TABLE entries ADD COLUMN imported_raw_sha256 TEXT")
         connection.execute(
             "UPDATE entries SET imported_raw_sha256=raw_sha256 WHERE imported_raw_sha256 IS NULL"
+        )
+        connection.execute(
+            """
+            UPDATE dataset_persistence
+               SET working_revision=CASE WHEN working_revision<1 THEN 1 ELSE working_revision END,
+                   has_unsaved_changes=1,updated_at=CURRENT_TIMESTAMP
+             WHERE id=1 AND last_saved_at IS NULL AND has_unsaved_changes=0
+               AND EXISTS (
+                   SELECT 1 FROM entries
+                    WHERE workflow_status<>'DRAFT'
+                       OR raw_sha256<>imported_raw_sha256
+               )
+            """
         )
         import_columns = {
             row["name"]
@@ -392,6 +454,39 @@ def _initialize_once(path: str | Path) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_entries_workflow
                 ON entries(import_run_id, workflow_status)
+            """
+        )
+        connection.executescript(
+            """
+            DROP TRIGGER IF EXISTS trg_entries_dirty_insert;
+            DROP TRIGGER IF EXISTS trg_entries_dirty_update;
+            DROP TRIGGER IF EXISTS trg_entries_dirty_delete;
+
+            CREATE TRIGGER trg_entries_dirty_update
+            AFTER UPDATE OF raw_sha256, workflow_status, workflow_origin ON entries
+            WHEN (
+                OLD.raw_sha256 IS NOT NEW.raw_sha256
+                OR OLD.workflow_status IS NOT NEW.workflow_status
+                OR OLD.workflow_origin IS NOT NEW.workflow_origin
+            ) AND (SELECT has_unsaved_changes FROM dataset_persistence WHERE id=1)=0
+            BEGIN
+                UPDATE dataset_persistence
+                   SET working_revision=working_revision+1,
+                       has_unsaved_changes=1,
+                       updated_at=CURRENT_TIMESTAMP
+                 WHERE id=1;
+            END;
+
+            CREATE TRIGGER trg_entries_dirty_delete
+            AFTER DELETE ON entries
+            WHEN (SELECT has_unsaved_changes FROM dataset_persistence WHERE id=1)=0
+            BEGIN
+                UPDATE dataset_persistence
+                   SET working_revision=working_revision+1,
+                       has_unsaved_changes=1,
+                       updated_at=CURRENT_TIMESTAMP
+                 WHERE id=1;
+            END;
             """
         )
 

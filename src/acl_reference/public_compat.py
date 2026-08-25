@@ -47,7 +47,7 @@ class PublicCompatibilityService:
         }
 
     def global_facets(self) -> dict:
-        return self._facets("", None, [])
+        return self._contextual_facets("", None, None, None, None)
 
     def search(
         self,
@@ -75,11 +75,6 @@ class PublicCompatibilityService:
                         "offset": 0,
                         "filter": filters or None,
                         "attributesToRetrieve": SUMMARY_ATTRIBUTES,
-                        "facets": [
-                            "grammatical_categories",
-                            "domains",
-                            "status",
-                        ],
                     },
                 ),
             )
@@ -104,7 +99,9 @@ class PublicCompatibilityService:
             "limit": limit,
             "offset": offset,
             "items": items,
-            "facets": self._merge_facets(groups),
+            "facets": self._contextual_facets(
+                query, collection, grammar, domain, status
+            ),
         }
 
     def catalogue(
@@ -169,6 +166,16 @@ class PublicCompatibilityService:
             "items": [self.entry_summary(hit) for _, hit in selected],
             "next_cursor": _encode_cursor(offsets) if has_more else None,
             "has_more": has_more,
+            "facets": self._contextual_facets(
+                "", collection, grammar, domain, status,
+                extra_filters=(
+                    [
+                        f'lemma_normalized >= "{_filter_escape(start)}"',
+                        f'lemma_normalized < "{_filter_escape(end)}"',
+                    ]
+                    if start else []
+                ),
+            ),
         }
 
     def resolve(self, identifier: str) -> dict:
@@ -391,6 +398,66 @@ class PublicCompatibilityService:
             for index in self._indexes(collection)
         ]
         return self._merge_facets(groups)
+
+    def _contextual_facets(
+        self,
+        query: str,
+        collection: str | None,
+        grammar: str | None,
+        domain: str | None,
+        status: str | None,
+        *,
+        extra_filters: list[str] | None = None,
+    ) -> dict:
+        """Calcula cada faceta com todos os filtros exceto ela própria."""
+        dimensions = (
+            ("grammatical_categories", self._filters(None, domain, status)),
+            ("domains", self._filters(grammar, None, status)),
+            ("status", self._filters(grammar, domain, None)),
+        )
+        queries = []
+        keys = []
+        for attribute, filters in dimensions:
+            filters.extend(extra_filters or [])
+            for index in self._indexes(collection):
+                item = {
+                    "indexUid": index,
+                    "q": query,
+                    "matchingStrategy": "last",
+                    "limit": 0,
+                    "facets": [attribute],
+                }
+                if filters:
+                    item["filter"] = filters
+                queries.append(item)
+                keys.append(index)
+        collection_filters = self._filters(grammar, domain, status)
+        collection_filters.extend(extra_filters or [])
+        for index in ("dictionary", "vocabulary"):
+            item = {
+                "indexUid": index,
+                "q": query,
+                "matchingStrategy": "last",
+                "limit": 0,
+            }
+            if collection_filters:
+                item["filter"] = collection_filters
+            queries.append(item)
+        response = self.client.request(
+            "POST", "/multi-search", {"queries": queries}
+        )
+        results = response.get("results") or []
+        facets = self._merge_facets(list(zip(keys, results[:len(keys)])))
+        collection_results = results[len(keys):]
+        facets["collections"] = [
+            {
+                "value": INDEX_TO_COLLECTION[index],
+                "label": "Dicionário" if index == "dictionary" else "Vocabulário",
+                "count": int(result.get("estimatedTotalHits", result.get("totalHits", 0))),
+            }
+            for index, result in zip(("dictionary", "vocabulary"), collection_results)
+        ]
+        return facets
 
     def _merge_facets(self, groups) -> dict:
         merged = {

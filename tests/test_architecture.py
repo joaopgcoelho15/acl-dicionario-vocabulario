@@ -8,7 +8,7 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
-from acl_reference.importer import import_xml
+from acl_reference.importer import import_xml, import_xml_batch
 from acl_reference.meili import MeiliClient
 from acl_reference.editorial_service import EditorialService
 from acl_reference.external_sources import set_source_publication
@@ -22,8 +22,9 @@ from acl_reference.publication import (
     verify_release,
 )
 from acl_reference.publication_jobs import PublicationJobManager
-from acl_reference.public_compat import _search_sort_key
+from acl_reference.public_compat import PublicCompatibilityService, _search_sort_key
 from acl_reference.validation import validate_active_run
+from acl_reference.persistence import persistence_status
 
 
 ROOT = Path(__file__).resolve().parent
@@ -55,6 +56,70 @@ class ReferenceArchitectureTests(unittest.TestCase):
         self.assertEqual(
             hashlib.sha256(raw_xml.encode("utf-8")).hexdigest(), raw_sha
         )
+
+    def test_working_data_dirty_indicator_and_explicit_xml_save(self):
+        import_xml(self.source, self.db)
+        self.assertFalse(persistence_status(self.db)["has_unsaved_changes"])
+        service = EditorialService(self.db, self.root / "exports")
+        entry = service.get_entry("DLP-cavalo_1-teste")
+        service.update_entry(
+            entry["public_id"],
+            {
+                "actor": "editor.demo",
+                "expected_updated_at": entry["updated_at"],
+                "lemma": "cavalo guardado",
+                "senses": [],
+                "comment": "Testar salvaguarda canónica",
+            },
+        )
+        self.assertTrue(persistence_status(self.db)["has_unsaved_changes"])
+        result = service.save_canonical(actor="editor.demo")
+        self.assertFalse(persistence_status(self.db)["has_unsaved_changes"])
+        self.assertTrue(Path(result["xml_path"]).is_file())
+        self.assertTrue(Path(result["log_path"]).is_file())
+        exported = Path(result["xml_path"]).read_text(encoding="utf-8")
+        self.assertIn("cavalo guardado", exported)
+        self.assertIn('status="edited"', exported)
+        self.assertIn('origin="imported"', exported)
+
+    def test_batch_import_adds_only_new_entries_atomically(self):
+        import_xml(self.source, self.db)
+        batch = self.root / "batch.xml"
+        batch.write_text(
+            '''<dic><entry xmlns="http://www.tei-c.org/ns/1.0" xml:id="DLP-nova-lote" xml:lang="pt"><form><orth>nova entrada</orth></form></entry></dic>''',
+            encoding="utf-8",
+        )
+        result = import_xml_batch(batch, self.db, actor="editor.demo")
+        self.assertEqual(result.imported, 1)
+        with sqlite3.connect(self.db) as connection:
+            count, status, origin = connection.execute(
+                "SELECT COUNT(*),MAX(workflow_status),MAX(workflow_origin) FROM entries WHERE public_id='DLP-nova-lote'"
+            ).fetchone()
+        self.assertEqual((count, status, origin), (1, "DRAFT", "imported"))
+        self.assertTrue(persistence_status(self.db)["has_unsaved_changes"])
+        with self.assertRaisesRegex(ValueError, "já existem"):
+            import_xml_batch(batch, self.db, actor="editor.demo")
+        with sqlite3.connect(self.db) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0], 3)
+
+    def test_failed_initial_reimport_preserves_the_active_dataset(self):
+        first = import_xml(self.source, self.db)
+        invalid = self.root / "duplicate.xml"
+        invalid.write_text(
+            '''<dic><entry xmlns="http://www.tei-c.org/ns/1.0" xml:id="duplicada"><form><orth>uma</orth></form></entry><entry xmlns="http://www.tei-c.org/ns/1.0" xml:id="duplicada"><form><orth>duas</orth></form></entry></dic>''',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "dados existentes foram preservados"):
+            import_xml(invalid, self.db)
+        with sqlite3.connect(self.db) as connection:
+            active_id, count = connection.execute(
+                "SELECT id,entry_count FROM import_runs WHERE is_active=1"
+            ).fetchone()
+            failed = connection.execute(
+                "SELECT status,is_active FROM import_runs ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        self.assertEqual((active_id, count), (first.run_id, 2))
+        self.assertEqual(failed, ("failed", 0))
 
     def test_publication_package_is_complete_and_verifiable(self):
         import_xml(self.source, self.db)
@@ -200,7 +265,7 @@ class ReferenceArchitectureTests(unittest.TestCase):
         )
         self.assertIn('<hi rend="italic">doméstico</hi>', fixed["raw_xml"])
         self.assertNotIn("<emph>", fixed["raw_xml"])
-        self.assertEqual(fixed["workflow_status"], "EDITING")
+        self.assertEqual(fixed["workflow_status"], "EDITED")
         self.assertEqual(len(fixed["revisions"]), 1)
 
     def test_local_activation_is_atomic_and_reversible(self):
@@ -241,18 +306,76 @@ class ReferenceArchitectureTests(unittest.TestCase):
                 ],
             },
         )
-        self.assertEqual(changed["workflow_status"], "EDITING")
+        self.assertEqual(changed["workflow_status"], "EDITED")
         self.assertEqual(changed["grammatical_info"], "nome masculino")
         self.assertEqual(len(changed["revisions"]), 1)
         self.assertIn("mamífero doméstico de teste", changed["raw_xml"])
         reviewed = service.set_workflow(
-            "DLP-cavalo_1-teste", "REVIEW", actor="editor.demo"
+            "DLP-cavalo_1-teste", "REVIEWED", actor="revisor.demo"
         )
-        self.assertEqual(reviewed["workflow_status"], "REVIEW")
+        self.assertEqual(reviewed["workflow_status"], "REVIEWED")
         validated = service.set_workflow(
-            "DLP-cavalo_1-teste", "VALIDATED", actor="revisor.demo"
+            "DLP-cavalo_1-teste", "VALIDATED", actor="aprovador.demo"
         )
         self.assertEqual(validated["workflow_status"], "VALIDATED")
+
+    def test_roles_removal_and_recovery_follow_the_simplified_workflow(self):
+        import_xml(self.source, self.db)
+        service = EditorialService(self.db)
+        public_id = "DLP-cavalo_1-teste"
+        with self.assertRaisesRegex(Exception, "não pode executar"):
+            service.set_workflow(public_id, "VALIDATED", actor="editor.demo")
+        reviewed = service.set_workflow(public_id, "REVIEWED", actor="revisor.demo")
+        self.assertEqual(reviewed["workflow_status"], "REVIEWED")
+        self.assertEqual(reviewed["workflow_actor"], "revisor.demo")
+        validated = service.set_workflow(public_id, "VALIDATED", actor="aprovador.demo")
+        self.assertEqual(validated["workflow_status"], "VALIDATED")
+        with self.assertRaisesRegex(Exception, "confirmação"):
+            service.set_workflow(public_id, "REMOVED", actor="aprovador.demo")
+        removed = service.set_workflow(
+            public_id, "REMOVED", actor="aprovador.demo", confirmed=True
+        )
+        self.assertEqual(removed["workflow_status"], "REMOVED")
+        recovered = service.set_workflow(public_id, "DRAFT", actor="editor.demo")
+        self.assertEqual(recovered["workflow_origin"], "recovered")
+        self.assertEqual(recovered["workflow_actor"], "editor.demo")
+
+    def test_published_removal_becomes_a_pending_public_operation(self):
+        import_xml(self.source, self.db)
+        service = EditorialService(self.db)
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE entries SET workflow_status='VALIDATED'")
+        ids = ["DLP-cavalo_1-teste", "VOLP-exemplo_1-teste"]
+        service.select_for_publication(ids, actor="aprovador.demo", selected=True)
+        first = build_release(
+            self.db, self.releases, release_id="published-base", selection_mode=True
+        )
+        service.mark_published(first.release_id)
+        published = service.get_entry(ids[0])
+        with self.assertRaisesRegex(Exception, "devolva primeiro"):
+            service.update_entry(
+                ids[0],
+                {"actor": "editor.demo", "expected_updated_at": published["updated_at"],
+                 "lemma": "não permitido", "senses": []},
+            )
+        removed = service.set_workflow(
+            ids[0], "REMOVED", actor="aprovador.demo", confirmed=True
+        )
+        self.assertTrue(removed["selected_for_publication"])
+        ready = service.publication_entries()
+        self.assertEqual(ready["total"], 1)
+        self.assertEqual(ready["items"][0]["workflow_status"], "REMOVED")
+        second = build_release(
+            self.db, self.releases, release_id="published-removal", selection_mode=True
+        )
+        self.assertNotIn(
+            "DLP-cavalo_1-teste",
+            (second.path / "canonical.xml").read_text(encoding="utf-8"),
+        )
+        service.mark_published(second.release_id)
+        final = service.get_entry(ids[0])
+        self.assertEqual(final["workflow_status"], "REMOVED")
+        self.assertEqual(service.publication_entries()["total"], 0)
 
     def test_editorial_filters_controlled_lists_and_validation(self):
         import_xml(self.source, self.db)
@@ -271,10 +394,16 @@ class ReferenceArchitectureTests(unittest.TestCase):
             for item in overview["filter_counts"]["domains"]
         }
         self.assertEqual(resource_counts, {"dictionary": 1, "vocabulary": 1})
-        self.assertEqual(workflow_counts["IMPORTED"], 2)
+        self.assertEqual(workflow_counts["DRAFT"], 2)
         self.assertEqual(domain_counts["Zool."], 1)
         dictionary = service.list_entries("", resource="dictionary")
         self.assertEqual(dictionary["total"], 1)
+        self.assertEqual(
+            {item["value"]: item["count"] for item in dictionary["facets"]["resource"]},
+            {"dictionary": 1, "vocabulary": 1},
+        )
+        self.assertEqual(dictionary["facets"]["grammar"][0]["count"], 1)
+        self.assertEqual(dictionary["facets"]["domains"][0]["value"], "Zool.")
         edited = service.list_entries("", editorial_status="edited")
         self.assertEqual(edited["total"], 1)
         result = validate_active_run(self.db)
@@ -282,6 +411,40 @@ class ReferenceArchitectureTests(unittest.TestCase):
         governance = GovernanceService(self.db)
         grammar = governance.list_values("grammar")
         self.assertTrue(any(item["value"] == "n. m." for item in grammar))
+
+    def test_public_facets_exclude_their_own_filter(self):
+        class FakeClient:
+            def __init__(self):
+                self.queries = []
+
+            def request(self, method, path, payload):
+                self.queries = payload["queries"]
+                results = []
+                for query in self.queries:
+                    facets = query.get("facets") or []
+                    if facets:
+                        results.append({"facetDistribution": {facets[0]: {"valor": 2}}})
+                    else:
+                        results.append({"estimatedTotalHits": 3})
+                return {"results": results}
+
+        client = FakeClient()
+        service = PublicCompatibilityService(client=client, releases=None)
+        facets = service._contextual_facets(
+            "cavalo", None, "n. m.", "Zool.", "edited"
+        )
+        grammar_query = client.queries[0]
+        domain_query = client.queries[2]
+        status_query = client.queries[4]
+        self.assertNotIn("grammatical_categories", " ".join(grammar_query["filter"]))
+        self.assertIn("domains", " ".join(grammar_query["filter"]))
+        self.assertNotIn("domains", " ".join(domain_query["filter"]))
+        self.assertNotIn('status =', " ".join(status_query["filter"]))
+        self.assertEqual(facets["grammar"][0]["count"], 4)
+        self.assertEqual(
+            {item["value"]: item["count"] for item in facets["collections"]},
+            {"DLP": 3, "VOCABULARIO": 3},
+        )
 
     def test_revision_can_be_restored_with_audit_trail(self):
         import_xml(self.source, self.db)
@@ -361,6 +524,50 @@ class ReferenceArchitectureTests(unittest.TestCase):
         manager._publish("test-001", "aprovador.demo", True, "anomalia")
         self.assertEqual(current_release(self.releases), "test-001")
         self.assertEqual(manager.client.release_id, "test-001")
+
+    def test_single_publication_action_builds_checks_and_activates(self):
+        import_xml(self.source, self.db)
+        service = EditorialService(self.db)
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE entries SET workflow_status='VALIDATED'")
+        service.select_for_publication(
+            ["DLP-cavalo_1-teste"], actor="aprovador.demo", selected=True
+        )
+        manager = PublicationJobManager(
+            db_path=self.db, releases_root=self.releases, images_root=None,
+            meili_url="http://invalid", meili_key="test",
+        )
+
+        class FakeMeili:
+            def build_release_indexes(fake, path):
+                fake.manifest = json.loads(
+                    (Path(path) / "manifest.json").read_text(encoding="utf-8")
+                )
+                return {"indexes": fake.manifest["indexes"]}
+
+            def request(fake, method, path):
+                index = path.split("/")[2]
+                resource = next(
+                    key for key, value in fake.manifest["indexes"].items()
+                    if value == index
+                )
+                return {"numberOfDocuments": fake.manifest["counts"][resource]}
+
+            def search_index(fake, index, body):
+                return {"hits": [{}]}
+
+            def activate_release_indexes(fake, path):
+                fake.activated = True
+
+        manager.client = FakeMeili()
+        manager._prepare_and_publish(
+            "single-action", "aprovador.demo", "Teste de publicação simples"
+        )
+        self.assertEqual(current_release(self.releases), "single-action")
+        self.assertEqual(manager.status()["state"], "succeeded")
+        self.assertEqual(
+            service.get_entry("DLP-cavalo_1-teste")["workflow_status"], "PUBLISHED"
+        )
 
     def test_failed_smoke_test_does_not_switch_public_indexes(self):
         import_xml(self.source, self.db)
@@ -488,13 +695,19 @@ class ReferenceArchitectureTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(label, "Zoologia")
         self.assertIn(">Zoologia<", raw_xml)
-        self.assertEqual(workflow, "EDITING")
+        self.assertEqual(workflow, "EDITED")
 
     def test_selective_release_keeps_unselected_edits_out_of_public_data(self):
         import_xml(self.source, self.db)
         service = EditorialService(self.db)
         with sqlite3.connect(self.db) as connection:
             connection.execute("UPDATE entries SET workflow_status='PUBLISHED'")
+        service.set_workflow(
+            "DLP-cavalo_1-teste", "NEEDS_REVISION", actor="aprovador.demo"
+        )
+        service.set_workflow(
+            "VOLP-exemplo_1-teste", "NEEDS_REVISION", actor="aprovador.demo"
+        )
         cavalo = service.get_entry("DLP-cavalo_1-teste")
         service.update_entry(
             cavalo["public_id"],

@@ -1,6 +1,12 @@
 .env
 .env.*
 !.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+credentials/
 __pycache__/
 *.pyc
 .pytest_cache/

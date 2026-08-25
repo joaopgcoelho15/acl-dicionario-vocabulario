@@ -6,11 +6,14 @@ import base64
 import hmac
 import json
 from pathlib import Path
+import tempfile
+import threading
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .editorial_service import EditorialError, EditorialService
 from .publication_jobs import PublicationJobManager
 from .validation import validate_active_run, validation_summary
+from .importer import import_xml, import_xml_batch
 
 
 def serve_editorial(
@@ -26,7 +29,12 @@ def serve_editorial(
     base_path: str = "",
     password: str | None = None,
 ) -> None:
-    service = EditorialService(db_path)
+    service = EditorialService(db_path, Path(releases_root) / "exports")
+    threading.Thread(
+        target=service.warm_entry_facets,
+        name="acl-editorial-facets",
+        daemon=True,
+    ).start()
     jobs = PublicationJobManager(
         db_path=db_path,
         releases_root=releases_root,
@@ -86,6 +94,20 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                 return self._json(HTTPStatus.OK, {"status": "ok", "mode": "editable"})
             if parsed.path == "/api/editorial/overview":
                 return self._json(HTTPStatus.OK, self.service.overview())
+            if parsed.path == "/api/editorial/audit":
+                return self._json(HTTPStatus.OK, self.service.audit_report())
+            if parsed.path.startswith("/api/editorial/exports/"):
+                filename = unquote(parsed.path.rsplit("/", 1)[-1])
+                if not filename or Path(filename).name != filename:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_name"})
+                content_type = (
+                    "application/xml; charset=utf-8"
+                    if filename.endswith(".xml")
+                    else "application/json; charset=utf-8"
+                )
+                return self._file(
+                    filename, content_type, root=self.service.exports_root
+                )
             if parsed.path == "/api/editorial/users":
                 return self._json(
                     HTTPStatus.OK, {"items": self.service.governance.users()}
@@ -174,6 +196,39 @@ class _EditorialHandler(BaseHTTPRequestHandler):
         if not self._require_auth():
             return
         try:
+            if parsed.path == "/api/editorial/import":
+                actor = self.headers.get("X-ACL-Actor", "").strip()
+                mode = self.headers.get("X-ACL-Import-Mode", "batch").strip().lower()
+                roles = (
+                    {"approver", "administrator"}
+                    if mode == "replace"
+                    else {"editor", "reviewer", "approver", "administrator"}
+                )
+                self.service.governance.require_user(actor, roles)
+                filename = Path(self.headers.get("X-ACL-Filename", "upload.xml")).name
+                suffix = ".xz" if filename.lower().endswith(".xz") else ".xml"
+                temporary = self._upload(suffix)
+                try:
+                    result = (
+                        import_xml(
+                            temporary, self.service.db_path, source_label=filename
+                        )
+                        if mode == "replace"
+                        else import_xml_batch(
+                            temporary, self.service.db_path, actor=actor
+                        )
+                    )
+                finally:
+                    temporary.unlink(missing_ok=True)
+                return self._json(
+                    HTTPStatus.CREATED,
+                    {
+                        "mode": mode,
+                        "run_id": result.run_id,
+                        "imported": result.imported,
+                        "errors": result.errors,
+                    },
+                )
             if parsed.path == "/api/editorial/controlled-values":
                 return self._json(
                     HTTPStatus.CREATED,
@@ -198,6 +253,24 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                         payload.get("public_ids") or [],
                         actor=str(payload.get("actor") or ""),
                         selected=bool(payload.get("selected", True)),
+                    ),
+                )
+            if parsed.path == "/api/editorial/save-canonical":
+                payload = self._body()
+                return self._json(
+                    HTTPStatus.OK,
+                    self.service.save_canonical(
+                        actor=str(payload.get("actor") or ""),
+                        rng_path=self.jobs.rng_path,
+                    ),
+                )
+            if parsed.path == "/api/editorial/publish-selected":
+                payload = self._body()
+                return self._json(
+                    HTTPStatus.ACCEPTED,
+                    self.jobs.publish_selected(
+                        actor=str(payload.get("actor") or ""),
+                        description=str(payload.get("description") or ""),
                     ),
                 )
             if parsed.path in {"/api/editorial/publish", "/api/editorial/releases/prepare"}:
@@ -275,6 +348,7 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                             str(payload.get("target") or ""),
                             actor=str(payload.get("actor") or ""),
                             comment=str(payload.get("comment") or ""),
+                            confirmed=bool(payload.get("confirmed", False)),
                         ),
                     )
                 if action and action.startswith("revisions/") and action.endswith("/restore"):
@@ -337,6 +411,27 @@ class _EditorialHandler(BaseHTTPRequestHandler):
         if not isinstance(value, dict):
             raise ValueError("O corpo do pedido deve ser um objeto JSON.")
         return value
+
+    def _upload(self, suffix: str) -> Path:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            raise ValueError("Ficheiro de importação em falta.")
+        if length > 1_500_000_000:
+            raise ValueError("O ficheiro de importação excede 1,5 GB.")
+        handle = tempfile.NamedTemporaryFile(
+            prefix="acl-import-", suffix=suffix, delete=False
+        )
+        remaining = length
+        try:
+            while remaining:
+                chunk = self.rfile.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise ValueError("A transferência do ficheiro ficou incompleta.")
+                handle.write(chunk)
+                remaining -= len(chunk)
+        finally:
+            handle.close()
+        return Path(handle.name)
 
     def _file(self, name, content_type, *, root=None):
         body = ((root or self.web_root) / name).read_bytes()

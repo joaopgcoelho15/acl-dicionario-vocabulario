@@ -1,84 +1,80 @@
-# Catálogo inicial do fluxo editorial
+# Gestão, persistência e estados editoriais
+
+Esta implementação segue a simplificação definida no anexo de gestão de
+persistência e estados editoriais. A base SQLite é a versão de trabalho; o XML
+TEI consolidado não é reescrito a cada edição.
+
+## Persistência do conjunto
+
+1. A importação inicial TEI/XML inicializa a base de dados apenas se puder ser
+   processada integralmente. Uma falha preserva o conjunto ativo anterior.
+2. Todas as edições seguintes são gravadas imediatamente em SQLite e ativam um
+   indicador global de alterações ainda não guardadas em XML.
+3. **Guardar TEI/XML** cria um novo ficheiro canónico completo, sem entradas
+   apagadas, e um log JSON associado. O indicador só é limpo depois de ambos os
+   ficheiros serem escritos e verificados.
+4. A importação adicional é atómica, aceita apenas identificadores novos e cria
+   entradas em preparação. A substituição integral exige um aprovador e dupla
+   confirmação na interface.
+
+Este estado global de salvaguarda é independente do estado editorial de cada
+entrada.
+
+## Estados das entradas
+
+```text
+EM PREPARAÇÃO → EDITADA → REVISTA → VALIDADA → PUBLICADA
+       ↑             ↓          ↓             ↓
+       └─ RECUPERADA   PRECISA DE REVISÃO       APAGADA
+```
+
+| Estado técnico | Significado |
+|---|---|
+| `DRAFT` | Entrada nova, importada ou recuperada, ainda em preparação. |
+| `EDITED` | Conteúdo alterado e guardado na base de trabalho. |
+| `REVIEWED` | Conteúdo revisto editorialmente. |
+| `NEEDS_REVISION` | Revisor ou aprovador pediu uma correção. |
+| `VALIDATED` | Entrada sem erros impeditivos e pronta para publicação. |
+| `PUBLISHED` | A versão desta entrada integra a interface pública ativa. |
+| `REMOVED` | Entrada apagada logicamente e excluída do próximo XML/publicação. |
+
+A origem de uma entrada em preparação é registada separadamente como
+`new`, `imported` ou `recovered`. Apagar exige dupla confirmação. Uma entrada
+publicada que seja apagada surge automaticamente em Publicação como remoção
+pendente; permanece no site público até essa operação ser publicada.
 
 ## Papéis
 
-| Papel | Operações da Fase 1 |
+| Papel | Operações principais |
 |---|---|
-| Editor | Pesquisar, editar, comentar e submeter para revisão. |
-| Revisor | Devolver para edição, validar entradas e governar listas. |
-| Aprovador | Aprovar candidatas, publicar e reverter releases. |
-| Administrador | Todas as operações anteriores. |
+| Editor | Editar, recuperar e enviar o trabalho para a etapa seguinte. |
+| Revisor | Rever, pedir correções e gerir listas controladas. |
+| Aprovador | Validar, apagar, escolher alterações e publicar. |
 
-Na interface, os perfis são apresentados por ordem de responsabilidade:
-editor, revisor e aprovador. A cor do indicador junto ao responsável muda com
-o papel ativo, para tornar imediatamente visível em que contexto se está a
-operar.
+Os utilizadores atuais são perfis de demonstração. **Responsável pela
+operação** determina quem fica registado no histórico enquanto existir uma
+palavra-passe partilhada. Com contas individuais, passará a ser determinado
+automaticamente pela sessão.
 
-Os utilizadores incluídos são perfis de demonstração. A identidade é
-registada em revisões, transições, listas e releases.
+## Publicação
 
-Na interface, “Responsável pela operação” seleciona qual destes perfis fica
-associado à próxima alteração. Esta opção materializa o requisito de histórico,
-responsável e separação de papéis da Fase 1; não foi pedida com esse texto
-exato. Enquanto existir uma palavra-passe partilhada, a seleção continua a ser
-necessária. Com autenticação individual futura, o campo poderá ser preenchido
-automaticamente e deixar de ser selecionável.
+Para o utilizador existe uma única ação: o aprovador seleciona entradas
+validadas e remoções pendentes e escolhe **Publicar entradas selecionadas**.
+A aplicação constrói e verifica internamente uma versão completa, cria índices
+versionados, executa testes de integridade e pesquisa e troca atomicamente a
+versão pública. As etapas técnicas permanecem no histórico para auditoria e
+reversão, mas não fazem parte do workflow editorial visível.
 
-## Estados e transições
+Entradas não selecionadas continuam a usar a respetiva projeção pública
+anterior. Assim, publicar parcialmente não expõe edições em curso nem remove
+conteúdo por acidente.
 
-```text
-IMPORTED → EDITING → REVIEW → VALIDATED → PUBLISHED
-                ↑         │          │
-                └─────────┘          └──→ EDITING
-```
+## Listas controladas e auditoria
 
-- `IMPORTED`: conteúdo preservado da fonte oficial, ainda não revisto no novo
-  sistema.
-- `EDITING`: entrada alterada ou devolvida para correção.
-- `REVIEW`: edição terminada e submetida a revisor.
-- `VALIDATED`: regras satisfeitas e decisão editorial registada.
-- `PUBLISHED`: entrada validada incluída numa release ativa.
+Na interface, cada lista mostra apenas o valor/abreviatura, a descrição completa
+e a contagem de utilizações. Alterar um valor para outro já existente propõe a
+união; recusá-la repõe o formulário. Um valor em uso não pode ser apagado sem
+ser unido a outro, evitando perda de dados.
 
-Ao chegar a `VALIDATED`, a entrada aparece em **Publicação**. Um aprovador
-escolhe explicitamente quais das entradas validadas entram na candidata. As
-restantes continuam validadas e pendentes; uma candidata continua a conter o
-corpus completo, reutilizando a última projeção pública das entradas que não
-foram escolhidas. Assim, uma publicação parcial de alterações nunca remove
-entradas do corpus público nem deixa passar edições ainda não selecionadas.
-
-O estado existente no XML continua separado em `editorial_status`; não é
-destruído nem reinterpretado sem decisão editorial.
-
-## Release
-
-```text
-candidate → approved → indexed → tested → active → archived
-                                                  └── rollback ──┘
-```
-
-O pacote de publicação não é alterado depois de criado. O estado operacional
-fica na base editorial e no apontador atómico da release ativa.
-
-## Listas controladas
-
-Cada lista guarda o valor técnico/abreviatura, a descrição completa e a
-quantidade de entradas que o usam. **Estado** é a decisão de governação:
-`authorized` permite o valor, `unmapped` assinala que ainda precisa de decisão
-e `obsolete` indica que não deve continuar a ser usado. **Substituição** aponta
-para o valor canónico proposto para um valor obsoleto; por si só não modifica
-o corpus.
-
-Quando a alteração do valor o torna igual a outro, a interface propõe um
-merge. Se o operador recusar, o formulário é reposto sem gravar. Se confirmar,
-os usos no XML e nas tabelas normalizadas são atualizados, as entradas afetadas
-passam a `EDITING` e a operação fica na auditoria. Um valor só pode ser apagado
-diretamente quando tem zero utilizações; valores em uso têm de ser unidos a um
-substituto para evitar perda de dados.
-
-## Contas individuais (evolução prevista)
-
-Os utilizadores de demonstração continuam a representar os três papéis. A
-estrutura já prevê utilizadores ativos e papéis, mas a criação de contas, a
-gestão de credenciais e uma área de administração ficam para a fase seguinte.
-Quando existir autenticação individual, o responsável deixará de ser escolhido
-manualmente e passará a ser determinado pela sessão autenticada.
+A página **Auditoria** resume estados, validações, persistência, publicações e
+as 200 operações mais recentes, com descarga do relatório em JSON.

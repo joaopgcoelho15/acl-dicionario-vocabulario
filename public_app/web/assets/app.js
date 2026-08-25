@@ -53,6 +53,7 @@
     browseStart: "",
     entryCounts: null,
     globalFacets: null,
+    currentFacets: null,
   };
 
   let inputTimer = null;
@@ -257,9 +258,7 @@
     try {
       const stats = await getJson(appUrl("/api/entry-counts"));
       state.entryCounts = stats;
-      els.countAll.textContent = number(stats.entries);
-      els.countDlp.textContent = number(stats.collections.DLP || 0);
-      els.countVocabulary.textContent = number(stats.collections.VOCABULARIO || 0);
+      updateCollectionCounts(state.currentFacets || state.globalFacets);
       if (state.browsing) renderBrowseSummary();
     } catch {
       els.countAll.textContent = "—";
@@ -269,7 +268,7 @@
   async function loadGlobalFacets() {
     try {
       state.globalFacets = await getJson(appUrl("/api/facets"));
-      if (!state.query) updateFacets(state.globalFacets);
+      updateFacets(state.currentFacets || state.globalFacets);
     } catch {
       state.globalFacets = null;
     }
@@ -608,26 +607,43 @@
   }
 
   function updateFacets(facets = {}) {
-    updateSelect(els.grammar, "Todas as classes", facets.grammar || [], state.grammar);
-    updateSelect(els.domain, "Todos os domínios", facets.domains || [], state.domain);
+    state.currentFacets = facets;
+    const global = state.globalFacets || facets;
+    updateSelect(els.grammar, "Todas as classes", facets.grammar || [], global.grammar || [], state.grammar);
+    updateSelect(els.domain, "Todos os domínios", facets.domains || [], global.domains || [], state.domain);
     const statuses = (facets.statuses || [])
       .filter((item) => item.value)
       .map((item) => ({
         ...item,
         label: item.label || statusLabel(item.value),
       }));
-    updateSelect(els.status, "Todos os estados", statuses, state.status);
+    const globalStatuses = (global.statuses || []).filter(item => item.value).map(item => ({...item,label:item.label || statusLabel(item.value)}));
+    updateSelect(els.status, "Todos os estados", statuses, globalStatuses, state.status);
+    updateCollectionCounts(facets);
     updateActiveFilterCount();
   }
 
-  function updateSelect(select, emptyLabel, items, selected) {
-    const values = [...items];
-    if (selected && !values.some((item) => item.value === selected)) {
-      values.unshift({ value: selected, label: selected, count: "—" });
-    }
-    select.innerHTML = `<option value="">${h(emptyLabel)}</option>` + values.map((item) =>
-      `<option value="${h(item.value)}"${item.value === selected ? " selected" : ""}>${h(item.label || item.value || "Sem estado")} (${number(item.count)})</option>`
-    ).join("");
+  function facetContextActive() { return Boolean(state.query || state.collection || state.grammar || state.domain || state.status || state.browseStart); }
+
+  function updateSelect(select, emptyLabel, items, globalItems, selected) {
+    const current = Object.fromEntries(items.map(item => [item.value,item]));
+    const contextual = facetContextActive();
+    const total = state.query ? state.total : (state.browseTotal ?? state.entryCounts?.entries ?? 0);
+    const globalTotal = state.entryCounts?.entries ?? total;
+    const countLabel = (available, global) => contextual ? `${number(available)}/${number(global)}` : number(global);
+    select.innerHTML = `<option value="">${h(emptyLabel)} [${countLabel(total,globalTotal)}]</option>` + globalItems.map((item) => {
+      const available = Number(current[item.value]?.count || 0); const disabled = contextual && available === 0 && item.value !== selected;
+      return `<option value="${h(item.value)}"${item.value === selected ? " selected" : ""}${disabled ? " disabled" : ""}>${h(item.label || item.value || "Sem estado")} [${countLabel(available,Number(item.count)||0)}]</option>`;
+    }).join("");
+  }
+
+  function updateCollectionCounts(facets = {}) {
+    const current = Object.fromEntries((facets?.collections || []).map(item => [item.value,Number(item.count)||0]));
+    const baseline = state.entryCounts?.collections || Object.fromEntries((state.globalFacets?.collections || []).map(item => [item.value,Number(item.count)||0]));
+    const contextual = facetContextActive(); const show = (value, global) => contextual ? `[${number(value)}/${number(global)}]` : `[${number(global)}]`;
+    const dlp = current.DLP ?? baseline.DLP ?? 0; const vocabulary = current.VOCABULARIO ?? baseline.VOCABULARIO ?? 0;
+    els.countDlp.textContent = show(dlp,baseline.DLP ?? dlp); els.countVocabulary.textContent = show(vocabulary,baseline.VOCABULARIO ?? vocabulary);
+    els.countAll.textContent = show(dlp + vocabulary,(baseline.DLP || 0) + (baseline.VOCABULARIO || 0));
   }
 
   function updateCollectionTabs() {
@@ -699,12 +715,7 @@
       els.results.scrollLeft = 0;
       updateAlphabet();
       els.results.innerHTML = loadingCards();
-      els.entry.innerHTML = `
-        <div class="entry-empty">
-          <span class="entry-empty__mark" aria-hidden="true">A–Z</span>
-          <h2>Catálogo alfabético</h2>
-          <p>Percorra as entradas e selecione uma para consultar a informação lexical.</p>
-        </div>`;
+      els.entry.innerHTML = `<div class="entry-empty"><p>A carregar a primeira entrada…</p></div>`;
     }
 
     const params = new URLSearchParams({ limit: "60" });
@@ -723,8 +734,11 @@
       }
       state.browseCursor = data.next_cursor;
       state.browseHasMore = data.has_more;
+      updateFacets(data.facets || {});
       els.loadMore.hidden = true;
       renderBrowseSummary();
+      if (reset && data.items.length) await loadEntry(data.items[0].xml_id,{navigate:false});
+      else if (reset) renderEmptyEntry("Sem resultados", "Remova alguns filtros ou escolha outra letra.");
     } catch {
       if (reset) {
         els.results.innerHTML = `<div class="error-state"><p>Não foi possível carregar o catálogo.</p></div>`;

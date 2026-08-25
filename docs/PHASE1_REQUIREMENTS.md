@@ -8,23 +8,23 @@ alto nível*, 29 de julho de 2026.
 | Importação integral DLP/VOLP | Cumprido | Importação incremental, preservação do fragmento XML, identificador, ordem e SHA-256. Corpus local: 244 124 entradas. |
 | Modelo interno e edição principal | Cumprido | Lema, formas, classe, estado, aceções/definições, marcas/domínios e remissões; XML e projeção lado a lado. |
 | Pesquisa interna e listas | Cumprido | Prefixo, recurso, workflow, estado de origem, classe, domínio e severidade; listas por estado e problemas. |
-| Estados e transições | Cumprido | Estado original preservado; workflow `IMPORTED → EDITING → REVIEW → VALIDATED → PUBLISHED`, com devolução controlada. |
-| Listas controladas prioritárias | Cumprido | Catálogo persistente de classes, domínios e estados com autorizado, obsoleto, por mapear, descrição, substituição e contagem de uso. |
-| Validações essenciais | Cumprido | Estrutura, lema, identificadores, duplicados por recurso, workflow, relações, aceções vazias, listas controladas e Relax NG oficial. Erros impedem a candidata; avisos ficam no relatório. |
+| Estados e transições | Cumprido | Workflow simplificado `DRAFT → EDITED → REVIEWED → VALIDATED → PUBLISHED`, com pedido de revisão, remoção e recuperação controladas. |
+| Listas controladas prioritárias | Cumprido | Classes, domínios e estados com valor, descrição e contagem de uso; renomeação, união assistida e eliminação segura. |
+| Validações essenciais | Cumprido | Estrutura, lema, identificadores, duplicados por recurso, workflow, relações, aceções vazias, listas controladas e Relax NG oficial. Erros impedem a validação/publicação; avisos ficam no relatório. |
 | Histórico e responsável | Cumprido | Utilizador e papel, snapshot anterior, data, comentário, auditoria das transições e reposição de revisão. |
-| Exportação TEI/XML e derivados | Cumprido | XML canónico integral, instrução `xml-model`, NDJSON por recurso, manifesto, checksums, contagens e relatório de fidelidade. |
-| Candidata, aprovação e publicação | Cumprido | Operações separadas, papéis autorizados, responsáveis, descrição, relatório e auditoria. |
+| Exportação TEI/XML e derivados | Cumprido | Ação explícita de salvaguarda gera XML canónico integral e log; a publicação gera NDJSON, manifesto, checksums, contagens e relatório. |
+| Publicação | Cumprido | Uma única ação visível do aprovador valida, prepara, testa e ativa internamente a versão selecionada. |
 | Consulta pública | Cumprido | DLP/VOLP separados ou conjuntos, filtros, A-Z, entrada estruturada, relações, imagens, XML/JSON, dados e estatísticas. |
 | Versão e reversão | Cumprido | Releases preservadas; rollback reconstrói e troca os dois índices, executa smoke tests e só depois altera a release ativa. |
 | Casos de teste | Cumprido tecnicamente | Oito casos em `acceptance/phase1-cases.json`, executáveis por CLI e aprovados pela bateria local. A homologação editorial continua a pertencer aos representantes da ACL. |
 
 ## Regras de bloqueio da publicação
 
-- Qualquer erro impede a preparação de uma candidata.
-- Entradas em edição ou revisão impedem a preparação.
+- Qualquer erro não dispensado impede validar e publicar a entrada afetada.
+- Entradas em edição ou revisão não ficam disponíveis para seleção.
 - Avisos relativos ao legado importado não impedem uma baseline, mas ficam
   identificados no relatório e nas listas de trabalho.
-- Uma candidata exige aprovação por `approver` ou `administrator`.
+- A publicação exige `approver` ou `administrator`.
 - A ativação exige checksums, indexação e smoke tests de contagem e pesquisa.
 - Os smoke tests correm sobre os índices versionados; uma falha não troca os
   índices públicos nem o apontador da release.

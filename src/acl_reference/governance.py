@@ -235,7 +235,8 @@ class GovernanceService:
             )
             if new_value != current["value"]:
                 self._replace_occurrences(
-                    connection, current["category"], current["value"], new_value
+                    connection, current["category"], current["value"], new_value,
+                    actor=username,
                 )
             connection.execute(
                 """
@@ -327,7 +328,8 @@ class GovernanceService:
             if source is None or target is None or source["category"] != target["category"]:
                 raise ValueError("Valores de merge inexistentes ou de categorias diferentes.")
             affected = self._replace_occurrences(
-                connection, source["category"], source["value"], target["value"]
+                connection, source["category"], source["value"], target["value"],
+                actor=actor,
             )
             connection.execute("DELETE FROM controlled_values WHERE id=?", (source_id,))
             connection.execute(
@@ -341,7 +343,9 @@ class GovernanceService:
         return next(item for item in self.list_values() if item["id"] == target_id)
 
     @staticmethod
-    def _replace_occurrences(connection, category: str, old: str, new: str) -> int:
+    def _replace_occurrences(
+        connection, category: str, old: str, new: str, *, actor: str
+    ) -> int:
         if old == new:
             return 0
         run = connection.execute(
@@ -397,10 +401,12 @@ class GovernanceService:
             raw_xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
             connection.execute(
                 """
-                UPDATE entries SET raw_xml=?,raw_sha256=?,workflow_status='EDITING',
+                UPDATE entries SET raw_xml=?,raw_sha256=?,workflow_status='EDITED',
+                       workflow_actor=?,
+                       workflow_updated_at=CURRENT_TIMESTAMP,
                        updated_at=CURRENT_TIMESTAMP WHERE id=?
                 """,
-                (raw_xml, hashlib.sha256(raw_xml.encode()).hexdigest(), row["id"]),
+                (raw_xml, hashlib.sha256(raw_xml.encode()).hexdigest(), actor, row["id"]),
             )
         return len(rows)
 

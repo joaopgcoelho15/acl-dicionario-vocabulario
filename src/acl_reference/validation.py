@@ -125,7 +125,7 @@ def validate_active_run(
             "error",
             "WORKFLOW_INVALID",
             "A entrada tem um estado de workflow inválido.",
-            "entries.workflow_status NOT IN ('IMPORTED','EDITING','REVIEW','VALIDATED','PUBLISHED')",
+            "entries.workflow_status NOT IN ('DRAFT','EDITED','REVIEWED','NEEDS_REVISION','VALIDATED','PUBLISHED','REMOVED')",
         )
         connection.execute(
             """
@@ -183,7 +183,7 @@ def validate_active_run(
                 import_run_id, entry_id, severity, rule_code, message, details_json
             )
             SELECT ?, entries.id,
-                   CASE WHEN entries.workflow_status='IMPORTED' THEN 'warning' ELSE 'error' END,
+                   CASE WHEN entries.workflow_status='DRAFT' THEN 'warning' ELSE 'error' END,
                    'SENSE_WITHOUT_CONTENT',
                    'A aceção não tem definição, glosa, remissão ou subaceção.',
                    json_object('sense_id', senses.public_id,
@@ -382,7 +382,7 @@ def _validate_rng(db_path: str | Path, run_id: int, rng_path: Path) -> None:
                     (
                         run_id,
                         row["id"],
-                        "warning" if row["workflow_status"] == "IMPORTED" else "error",
+                        "warning" if row["workflow_status"] == "DRAFT" else "error",
                         f"A entrada não é válida segundo o esquema Relax NG. Motivo: {reason}.",
                         json.dumps(
                             {
