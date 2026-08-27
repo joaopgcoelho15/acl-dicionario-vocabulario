@@ -41,7 +41,7 @@ O editor local pode ser iniciado separadamente:
 ```bash
 python3 -m acl_reference serve-editorial \
   --releases-root releases \
-  --images-root releases/local-2026-007/images
+  --images-root releases/local-2026-008/images
 ```
 
 Fica disponível apenas em `http://127.0.0.1:8089/`.
@@ -106,6 +106,63 @@ Consultar `docs/PHASE1_REQUIREMENTS.md` e `docs/EDITORIAL_WORKFLOW.md`.
 Para publicação no IRIS, consultar `docs/DEPLOYMENT_IRIS.md`.
 Para a separação entre software, dados e segredos, bem como para o processo de
 backup e restauro, consultar `docs/GITHUB_REPOSITORIES.md`.
+
+## Iniciar um servidor novo do zero
+
+Um servidor novo precisa de duas **deploy keys novas**. As chaves privadas só
+existem no servidor e não são guardadas no GitHub nem nos snapshots; por isso,
+se o servidor desaparecer, estas chaves têm obrigatoriamente de ser geradas e
+registadas novamente.
+
+1. Instalar Git, Git LFS, Docker e Docker Compose.
+2. Gerar duas chaves sem passphrase:
+
+```bash
+install -d -m 700 /root/.ssh/acl-github
+ssh-keygen -t ed25519 -N "" \
+  -C "acl-software-deploy@acl-server" \
+  -f /root/.ssh/acl-github/software_ed25519
+ssh-keygen -t ed25519 -N "" \
+  -C "acl-data-backup@acl-server" \
+  -f /root/.ssh/acl-github/data_ed25519
+ssh-keyscan -H github.com > /root/.ssh/acl-github/known_hosts
+```
+
+3. No GitHub, adicionar `software_ed25519.pub` às **Deploy keys** do
+   repositório do software, apenas com leitura. Adicionar `data_ed25519.pub` às
+   **Deploy keys** do repositório dos dados, ativando **Allow write access**.
+4. Clonar os dois repositórios e fixar a chave de cada clone:
+
+```bash
+GIT_SSH_COMMAND="ssh -i /root/.ssh/acl-github/software_ed25519 -o IdentitiesOnly=yes" \
+  git clone git@github.com:joaopgcoelho15/acl-dicionario-vocabulario.git \
+  /opt/acl-reference
+GIT_SSH_COMMAND="ssh -i /root/.ssh/acl-github/data_ed25519 -o IdentitiesOnly=yes" \
+  git clone git@github.com:joaopgcoelho15/acl-dicionario-vocabulario-dados.git \
+  /opt/ACL_Dados_Editorais_GitHub
+git -C /opt/acl-reference config core.sshCommand \
+  "ssh -i /root/.ssh/acl-github/software_ed25519 -o IdentitiesOnly=yes"
+git -C /opt/ACL_Dados_Editorais_GitHub config core.sshCommand \
+  "ssh -i /root/.ssh/acl-github/data_ed25519 -o IdentitiesOnly=yes"
+```
+
+5. Disponibilizar a chave dos dados apenas ao contentor editorial e executar o
+   restauro integral:
+
+```bash
+install -d -m 700 /opt/acl-reference/deploy/github-ssh
+install -m 600 /root/.ssh/acl-github/data_ed25519 \
+  /opt/acl-reference/deploy/github-ssh/id_ed25519
+install -m 600 /root/.ssh/acl-github/known_hosts \
+  /opt/acl-reference/deploy/github-ssh/known_hosts
+/opt/acl-reference/deploy/restore-from-github.sh
+```
+
+O último comando descarrega o snapshot Git LFS, verifica os checksums, restaura
+as bases e a release ativa, reconstrói o Meilisearch e inicia as aplicações
+pública e editorial. As passwords provisórias são recuperadas do `.env` do
+repositório privado; as deploy keys não são recuperáveis e têm sempre de ser
+recriadas no servidor novo.
 
 ## Segurança da versão anterior
 

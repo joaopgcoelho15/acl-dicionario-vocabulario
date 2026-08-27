@@ -110,4 +110,6 @@ clone dos dados e descarrega os objetos do snapshot. O servidor precisa de ter
 
 O acesso inicial aos repositórios privados continua a exigir autenticação na
 conta GitHub ou uma deploy key. Essa credencial não pode ser recuperada de um
-repositório que ainda não foi clonado.
+repositório que ainda não foi clonado. Num servidor novo devem ser geradas duas
+deploy keys novas: leitura para o software e escrita para os dados. As instruções
+completas estão na secção **Iniciar um servidor novo do zero** do `README.md`.
