@@ -213,6 +213,10 @@ class ReferenceArchitectureTests(unittest.TestCase):
         with sqlite3.connect(restored_db) as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0], 2)
 
+        unchanged = service.sync_if_changed(actor="sistema.backup")
+        self.assertTrue(unchanged["skipped"])
+        self.assertEqual(unchanged["commit"], synced["commit"])
+
     def test_integrity_failure_identifies_the_changed_file(self):
         import_xml(self.source, self.db)
         result = build_release(self.db, self.releases, release_id="test-damaged")

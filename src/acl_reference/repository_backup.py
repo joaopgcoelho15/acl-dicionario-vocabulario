@@ -93,7 +93,7 @@ class RepositoryBackupService:
         def run() -> None:
             while not self._periodic_stop.wait(interval_seconds):
                 try:
-                    self.sync(actor=actor)
+                    self.sync_if_changed(actor=actor)
                 except RepositoryBackupError as exc:
                     # Uma publicação pode já estar a sincronizar. Nesse caso, essa
                     # operação produz o snapshot e o ciclo periódico tenta novamente
@@ -131,6 +131,15 @@ class RepositoryBackupService:
         finally:
             self._operation_lock.release()
 
+    def sync_if_changed(self, *, actor: str) -> dict:
+        """Sincroniza apenas quando o estado editorial mudou desde o snapshot."""
+        fingerprint = self._source_fingerprint()
+        with self._state_lock:
+            previous = self._state.get("source_fingerprint")
+        if previous and previous == fingerprint:
+            return {**self.status(), "skipped": True}
+        return self.sync(actor=actor)
+
     def _background_sync(self, actor: str, release_id: str | None) -> None:
         try:
             self._sync_locked(actor=actor, release_id=release_id)
@@ -162,6 +171,7 @@ class RepositoryBackupService:
                 finished_at=_now(),
                 commit=commit,
                 manifest=manifest,
+                source_fingerprint=self._source_fingerprint(),
             )
             return result
         except Exception as exc:
@@ -175,6 +185,17 @@ class RepositoryBackupService:
                 commit=None,
             )
             raise
+
+    def _source_fingerprint(self) -> str:
+        """Identifica alterações persistentes sem comprimir toda a base."""
+        values = [str(self.db_path.resolve()), _active_release(self.releases_root) or ""]
+        for path in (self.db_path, Path(f"{self.db_path}-wal")):
+            if path.is_file():
+                stat = path.stat()
+                values.extend((str(path), str(stat.st_size), str(stat.st_mtime_ns)))
+            else:
+                values.extend((str(path), "missing"))
+        return hashlib.sha256("\0".join(values).encode("utf-8")).hexdigest()
 
     def _validate_repository(self) -> Path:
         repository = self.repository_path

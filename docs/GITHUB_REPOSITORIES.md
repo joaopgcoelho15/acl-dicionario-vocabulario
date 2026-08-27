@@ -42,6 +42,12 @@ editorial ainda não publicado. O intervalo é configurado por
 Também disponibiliza a operação manual
 **Sincronizar agora** em **Dados TEI/XML**.
 
+O ciclo periódico compara primeiro o estado da base editorial e só cria um
+commit quando existem alterações desde o último snapshot. Alterações apenas no
+log de acessos não criam versões Git de 30 em 30 minutos; o log é incluído na
+salvaguarda seguinte provocada por trabalho editorial, publicação ou operação
+manual.
+
 O snapshot `current/` contém:
 
 - `editorial.sqlite.xz`: entradas, contas, papéis, workflow, listas,
