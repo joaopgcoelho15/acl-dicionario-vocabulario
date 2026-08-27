@@ -5,6 +5,12 @@ project_dir="${1:-/opt/acl-reference}"
 data_dir="${2:-/opt/ACL_Dados_Editorais_GitHub}"
 
 cd "$project_dir"
+command -v git-lfs >/dev/null 2>&1 || {
+  echo "Git LFS não está instalado no servidor." >&2
+  exit 1
+}
+git -C "$data_dir" lfs install --local
+git -C "$data_dir" lfs pull
 test -f "$data_dir/current/manifest.json"
 test -f "$data_dir/current/runtime.env"
 

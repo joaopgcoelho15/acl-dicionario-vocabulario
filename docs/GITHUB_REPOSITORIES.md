@@ -94,7 +94,7 @@ base de autenticação e para uma salvaguarda própria.
 
 1. clonar o repositório do software em `/opt/acl-reference`;
 2. clonar o repositório privado dos dados em
-   `/opt/ACL_Dados_Editorais_GitHub` e executar `git lfs pull`;
+   `/opt/ACL_Dados_Editorais_GitHub`;
 3. executar:
 
 ```bash
@@ -104,7 +104,9 @@ chmod +x /opt/acl-reference/deploy/restore-from-github.sh
 
 O comando verifica os checksums, preserva a base anterior em
 `var/restore-backups/`, restaura SQLite, release e configuração, reconstrói os
-índices Meilisearch e inicia as duas aplicações.
+índices Meilisearch e inicia as duas aplicações. Também inicializa o Git LFS no
+clone dos dados e descarrega os objetos do snapshot. O servidor precisa de ter
+`git-lfs` instalado antes de executar o comando.
 
 O acesso inicial aos repositórios privados continua a exigir autenticação na
 conta GitHub ou uma deploy key. Essa credencial não pode ser recuperada de um

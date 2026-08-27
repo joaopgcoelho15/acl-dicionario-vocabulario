@@ -17,10 +17,11 @@ recebem os prefixos por configuração e geram URLs corretos no HTML e JavaScrip
 
 ## Preparação
 
-1. Confirmar que o clone inclui o `.env` versionado no repositório privado.
-2. Confirmar `APP_BIND_ADDRESS=0.0.0.0` se o Nginx estiver noutra máquina.
-3. Restringir as portas 5059 e 5060, na firewall, ao endereço do proxy.
-4. Confirmar que `var/editorial.sqlite`, `releases/` e as imagens estão
+1. Confirmar que `git`, `git-lfs`, Docker e Docker Compose estão instalados.
+2. Confirmar que o clone inclui o `.env` versionado no repositório privado.
+3. Confirmar `APP_BIND_ADDRESS=0.0.0.0` se o Nginx estiver noutra máquina.
+4. Restringir as portas 5059 e 5060, na firewall, ao endereço do proxy.
+5. Confirmar que `var/editorial.sqlite`, `releases/` e as imagens estão
    materializados localmente e não são placeholders OneDrive.
 
 Nesta fase provisória, `EDITORIAL_PASSWORD` e `MEILI_MASTER_KEY` estão no
