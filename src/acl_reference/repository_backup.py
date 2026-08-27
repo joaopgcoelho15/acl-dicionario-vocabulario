@@ -187,15 +187,42 @@ class RepositoryBackupService:
             raise
 
     def _source_fingerprint(self) -> str:
-        """Identifica alterações persistentes sem comprimir toda a base."""
-        values = [str(self.db_path.resolve()), _active_release(self.releases_root) or ""]
-        for path in (self.db_path, Path(f"{self.db_path}-wal")):
-            if path.is_file():
-                stat = path.stat()
-                values.extend((str(path), str(stat.st_size), str(stat.st_mtime_ns)))
-            else:
-                values.extend((str(path), "missing"))
-        return hashlib.sha256("\0".join(values).encode("utf-8")).hexdigest()
+        """Identifica alterações editoriais lógicas, ignorando checkpoints SQLite."""
+        with sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True) as connection:
+            signature = connection.execute(
+                """
+                SELECT
+                  COALESCE((SELECT MAX(id) FROM audit_events), 0),
+                  (SELECT COUNT(*) FROM audit_events),
+                  COALESCE((SELECT MAX(id) FROM revisions), 0),
+                  (SELECT COUNT(*) FROM revisions),
+                  COALESCE((SELECT MAX(updated_at) FROM entries), ''),
+                  (SELECT COUNT(*) FROM entries),
+                  COALESCE((SELECT MAX(updated_at) FROM controlled_values), ''),
+                  (SELECT COUNT(*) FROM controlled_values),
+                  COALESCE((SELECT MAX(id) FROM validation_issues), 0),
+                  (SELECT COUNT(*) FROM validation_issues),
+                  COALESCE((SELECT MAX(id) FROM validation_runs), 0),
+                  (SELECT COUNT(*) FROM validation_runs),
+                  COALESCE((SELECT MAX(id) FROM import_runs), 0),
+                  (SELECT COUNT(*) FROM import_runs),
+                  COALESCE((SELECT MAX(selected_at) FROM publication_selections), ''),
+                  (SELECT COUNT(*) FROM publication_selections),
+                  COALESCE((SELECT MAX(updated_at) FROM dataset_persistence), ''),
+                  COALESCE((SELECT GROUP_CONCAT(
+                    username || ':' || role || ':' || active, '|'
+                  ) FROM editorial_users), ''),
+                  COALESCE((SELECT GROUP_CONCAT(
+                    release_id || ':' || state || ':' || COALESCE(activated_at, ''), '|'
+                  ) FROM releases), '')
+                """
+            ).fetchone()
+        payload = json.dumps(
+            [*signature, _active_release(self.releases_root) or ""],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _validate_repository(self) -> Path:
         repository = self.repository_path
