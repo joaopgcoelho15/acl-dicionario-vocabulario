@@ -16,3 +16,77 @@ button{padding:.55rem .8rem;border:1px solid var(--accent);background:var(--acce
 .compact-search{display:flex;gap:.4rem}.compact-search input{min-width:260px;margin:0}.publication-entry{align-items:center;justify-content:space-between}.publication-entry__actions{display:flex;gap:.35rem;margin-left:auto}
 @media(max-width:900px){.audit-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:760px){.persistence-card,.publish-action{align-items:flex-start;flex-direction:column}.audit-grid{grid-template-columns:1fr}.workflow-lifecycle__heading{align-items:flex-start;flex-direction:column}.workflow-track{grid-template-columns:1fr 1fr}.workflow-alternatives{align-items:stretch;flex-wrap:wrap}.workflow-alternatives>span{flex:0 0 100%}.workflow-alternatives .workflow-step{flex:1 1 140px}}
+
+/* Linguagem visual editorial: conteúdo, metadados, ações e alertas. */
+.editorial-main{width:min(calc(100% - 2rem),1500px);margin-inline:auto}
+.editorial-workspace{grid-template-columns:minmax(300px,440px) minmax(560px,980px);width:fit-content;max-width:100%;justify-content:start;gap:1.25rem}
+.entry-panel{width:min(100%,980px);padding:clamp(18px,2.5vw,32px)}
+.table-wrap{width:fit-content;max-width:100%}.table-wrap table{width:max-content;max-width:100%}
+.governance-toolbar{grid-template-columns:repeat(4,minmax(150px,250px));width:fit-content;max-width:100%}
+.publication-grid{grid-template-columns:repeat(2,minmax(340px,640px));width:fit-content;max-width:100%}
+
+/* Os botões são os únicos controlos com fundo escuro; ações secundárias ficam em contorno. */
+button,.button-link{border-color:#171514;background:#171514;color:#fff;box-shadow:0 2px 0 rgba(0,0,0,.18)}
+button:hover,.button-link:hover{border-color:#000;background:#000}
+button.secondary,.button-link.secondary{border-color:#514c49;background:#fff;color:#292624;box-shadow:none}
+button.secondary:hover,.button-link.secondary:hover{background:#eeeae7;color:#171514}
+button.danger{border-color:#8b2929;background:#fff;color:#8b2929;box-shadow:none}
+.nav-link,.editorial-nav a,.alphabet-index button,.result-card{box-shadow:none}
+.nav-link{background:transparent;color:var(--ink)}
+.nav-link.active,.nav-link.active:hover{border-bottom-color:var(--accent);background:var(--accent);color:#fff}
+
+/* Metadados: cinzento, contorno fino e cantos arredondados. */
+.entry-metadata,.technical-details,.history-details{border:1px solid #d4d0cd;border-radius:8px;background:#f2f1f0;color:#4d4946}
+.workflow-lifecycle{margin:0 0 1rem;padding:.85rem 1rem;border-bottom:1px solid #d4d0cd;background:#f2f1f0}
+.workflow-lifecycle__heading{align-items:center;margin-bottom:.75rem}
+.workflow-lifecycle__heading>div:first-child{display:grid;gap:.2rem}
+.workflow-lifecycle__context{display:flex;align-items:center;gap:.75rem;color:var(--muted);font-size:.7rem}
+.entry-technical-id{font-size:.72rem;color:var(--muted)}
+.entry-technical-id strong{font-family:inherit!important;font-size:inherit!important}
+.entry-metadata:not(.workflow-lifecycle){margin:0 0 1rem;padding:.7rem .85rem}
+.entry-metadata h3{margin:0 0 .5rem;font:700 .68rem/1.2 var(--sans);letter-spacing:.07em;text-transform:uppercase}
+.entry-metadata dl{display:flex;flex-wrap:wrap;gap:.6rem 1.5rem;margin:0}
+.entry-metadata dl div{display:flex;gap:.4rem;align-items:baseline}
+.entry-metadata dt{font-size:.65rem;font-weight:750;text-transform:uppercase}.entry-metadata dd{margin:0;font-size:.75rem}
+.technical-details,.history-details{margin:1rem 0}.technical-details summary,.history-details summary{border-radius:8px}
+.diagnostic-grid{background:#d4d0cd}.diagnostic-grid pre{background:#f7f6f5}
+
+/* Dados lexicais: branco, cantos retos e contorno mais marcado. */
+.lexical-data-card{border:2px solid #292624!important;border-radius:0!important;background:#fff!important}
+.entry-header.lexical-data-card{padding:1rem 1.1rem 1.15rem;border-left:2px solid #292624!important;border-bottom:2px solid #292624!important}
+.content-kicker{display:block;margin-bottom:.7rem;color:#292624;font-size:.66rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.lexical-content{padding:.15rem 0}.lexical-content .entry-section{max-width:900px}
+.edit-form.lexical-data-card{padding:1rem;margin-bottom:1rem}
+.inline-field,.sense-editor{background:#f8f7f6}.sense-editor{border-left-color:#292624}
+
+/* Estados usam apenas um acento cromático; deixam de tingir o conteúdo ou os metadados. */
+.result-card[class*="workflow-"]{border-left:0;background:#fff;box-shadow:inset 5px 0 var(--workflow-accent)}
+.result-card[class*="workflow-"]:hover{background:#f7f6f5;box-shadow:inset 5px 0 var(--workflow-accent)}
+.result-card.is-selected,.result-card.is-selected[class*="workflow-"]{background:#eceae8;box-shadow:inset 7px 0 var(--workflow-accent)}
+.result-card[class*="workflow-"]>small{color:#4d4946}
+.publication-entry[class*="workflow-"]{border-left:4px solid var(--workflow-accent);background:#fff}.publication-entry[class*="workflow-"] strong{color:var(--ink)}
+.workflow-step{border:1px solid #cbc7c4;border-top:4px solid var(--workflow-accent);background:#fff;color:#292624;box-shadow:none}
+.workflow-step:disabled{background:#faf9f8;color:#77716d;box-shadow:none}
+.workflow-step.is-current:disabled{border-color:#aaa5a1;border-top-color:var(--workflow-accent);background:#dedbd8;color:#292624;opacity:1}
+.workflow-step.is-current .workflow-step__mark{background:var(--workflow-accent)}
+.workflow-step.is-available{border-color:#171514;border-top-color:var(--workflow-accent);background:#171514;color:#fff;box-shadow:0 2px 0 rgba(0,0,0,.18);opacity:1}
+.workflow-step.is-available:hover{outline:0;border-color:#000;background:#000;color:#fff}
+.workflow-alternatives .workflow-step{border-top-width:3px}
+
+/* Ausência de dados e problemas editoriais. */
+.is-missing-lemma{color:#625d59!important;font-style:italic!important;font-weight:400!important}
+.missing-data-note{margin:.45rem 0 0;color:#7a2626;font-size:.76rem}
+.issues{margin:1rem 0}.validation-issue{border-left:4px solid #8b2929;border-radius:0;background:#fff0f0;color:#752424}
+
+@media(max-width:1100px){
+  .editorial-workspace{grid-template-columns:minmax(280px,360px) minmax(0,1fr);width:100%}
+  .governance-toolbar{grid-template-columns:repeat(2,minmax(180px,1fr));width:100%}
+  .publication-grid{grid-template-columns:1fr;width:100%}
+}
+@media(max-width:760px){
+  .editorial-main{width:min(calc(100% - 1rem),1500px)}
+  .editorial-workspace{grid-template-columns:1fr}
+  .workflow-lifecycle__context{align-items:flex-start;flex-direction:column}
+  .entry-panel{width:100%;padding:14px}
+  .governance-toolbar{grid-template-columns:1fr;width:100%}
+}

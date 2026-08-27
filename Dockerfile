@@ -6,6 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git git-lfs openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml ./
 COPY src ./src
 COPY public_app ./public_app

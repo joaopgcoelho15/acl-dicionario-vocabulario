@@ -14,6 +14,7 @@ from .editorial_service import EditorialError, EditorialService
 from .publication_jobs import PublicationJobManager
 from .validation import validate_active_run, validation_summary
 from .importer import import_xml, import_xml_batch
+from .repository_backup import RepositoryBackupService
 
 
 def serve_editorial(
@@ -28,6 +29,14 @@ def serve_editorial(
     port: int = 8089,
     base_path: str = "",
     password: str | None = None,
+    github_repository: str | Path | None = None,
+    github_remote: str = "origin",
+    github_branch: str = "main",
+    github_require_lfs: bool = True,
+    github_push: bool = True,
+    github_backup_interval: int = 1800,
+    usage_db: str | Path | None = None,
+    runtime_env: str | Path | None = None,
 ) -> None:
     service = EditorialService(db_path, Path(releases_root) / "exports")
     threading.Thread(
@@ -35,6 +44,22 @@ def serve_editorial(
         name="acl-editorial-facets",
         daemon=True,
     ).start()
+    repository_backup = RepositoryBackupService(
+        db_path=db_path,
+        releases_root=releases_root,
+        repository_path=github_repository,
+        usage_db=usage_db,
+        runtime_env=runtime_env,
+        remote=github_remote,
+        branch=github_branch,
+        require_lfs=github_require_lfs,
+        push=github_push,
+    ) if github_repository else None
+    if repository_backup:
+        repository_backup.start_periodic(
+            interval_seconds=github_backup_interval,
+            actor="sistema.backup",
+        )
     jobs = PublicationJobManager(
         db_path=db_path,
         releases_root=releases_root,
@@ -42,6 +67,7 @@ def serve_editorial(
         meili_url=meili_url,
         meili_key=meili_key,
         rng_path=rng_path,
+        repository_backup=repository_backup,
     )
     handler = type(
         "ACLEditorialHandler",
@@ -148,6 +174,11 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                 )
             if parsed.path == "/api/editorial/publish/status":
                 return self._json(HTTPStatus.OK, self.jobs.status())
+            if parsed.path == "/api/editorial/github-backup/status":
+                return self._json(
+                    HTTPStatus.OK,
+                    self.jobs.status()["repository_backup"],
+                )
             if parsed.path == "/api/editorial/publication-entries":
                 query = parse_qs(parsed.query)
                 return self._json(
@@ -263,6 +294,20 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                         actor=str(payload.get("actor") or ""),
                         rng_path=self.jobs.rng_path,
                     ),
+                )
+            if parsed.path == "/api/editorial/github-backup/sync":
+                payload = self._body()
+                actor = str(payload.get("actor") or "")
+                self.service.governance.require_user(
+                    actor, {"approver", "administrator"}
+                )
+                if not self.jobs.repository_backup:
+                    raise RuntimeError(
+                        "A sincronização GitHub não está configurada no servidor."
+                    )
+                return self._json(
+                    HTTPStatus.ACCEPTED,
+                    self.jobs.repository_backup.start(actor=actor),
                 )
             if parsed.path == "/api/editorial/publish-selected":
                 payload = self._body()

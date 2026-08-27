@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -25,6 +26,10 @@ from acl_reference.publication_jobs import PublicationJobManager
 from acl_reference.public_compat import PublicCompatibilityService, _search_sort_key
 from acl_reference.validation import validate_active_run
 from acl_reference.persistence import persistence_status
+from acl_reference.repository_backup import (
+    RepositoryBackupService,
+    restore_repository_snapshot,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -154,6 +159,59 @@ class ReferenceArchitectureTests(unittest.TestCase):
             vocabulary["senses"][0]["definition"],
             "sentido incluído dentro de gloss",
         )
+
+    def test_repository_backup_commits_and_restores_complete_state(self):
+        import_xml(self.source, self.db)
+        result = build_release(self.db, self.releases, release_id="backup-001")
+        approve_release(
+            self.db,
+            self.releases,
+            result.release_id,
+            actor="aprovador.demo",
+        )
+        activate_local_release(self.db, self.releases, result.release_id)
+        runtime_env = self.root / "runtime.env"
+        runtime_env.write_text("EDITORIAL_PASSWORD=ACL\n", encoding="utf-8")
+        repository = self.root / "data-repository"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=repository, check=True, stdout=subprocess.DEVNULL)
+        (repository / "README.md").write_text("dados\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Teste", "-c", "user.email=teste@example.test", "commit", "-m", "Inicial"],
+            cwd=repository,
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        service = RepositoryBackupService(
+            db_path=self.db,
+            releases_root=self.releases,
+            repository_path=repository,
+            runtime_env=runtime_env,
+            require_lfs=False,
+            push=False,
+        )
+        synced = service.sync(actor="aprovador.demo")
+        self.assertEqual(synced["state"], "succeeded")
+        self.assertTrue((repository / "current" / "editorial.sqlite.xz").is_file())
+        manifest = json.loads((repository / "current" / "manifest.json").read_text())
+        self.assertEqual(manifest["active_release"], "backup-001")
+        self.assertEqual((repository / "current" / "runtime.env").read_text(), "EDITORIAL_PASSWORD=ACL\n")
+
+        restored_db = self.root / "restored" / "editorial.sqlite"
+        restored_releases = self.root / "restored-releases"
+        restored_env = self.root / "restored.env"
+        restored = restore_repository_snapshot(
+            repository,
+            db_path=restored_db,
+            releases_root=restored_releases,
+            env_target=restored_env,
+        )
+        self.assertEqual(restored["active_release"], "backup-001")
+        self.assertTrue((restored_releases / "backup-001" / "manifest.json").is_file())
+        self.assertEqual(restored_env.read_text(), "EDITORIAL_PASSWORD=ACL\n")
+        with sqlite3.connect(restored_db) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0], 2)
 
     def test_integrity_failure_identifies_the_changed_file(self):
         import_xml(self.source, self.db)

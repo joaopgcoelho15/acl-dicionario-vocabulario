@@ -6,6 +6,7 @@ let selectedEntry = null;
 let controlledValues = [];
 let publicationItems = [];
 let publicationTimer = null;
+let backupTimer = null;
 let entryOffset = 0;
 let activeAlphabet = "";
 
@@ -33,7 +34,7 @@ document.querySelectorAll("[data-view]").forEach(button => button.addEventListen
   document.querySelectorAll(".nav-link").forEach(item => item.classList.toggle("active", item === button));
   document.querySelectorAll(".view").forEach(view => view.classList.toggle("active", view.id === button.dataset.view));
   if (button.dataset.view === "governance-panel") loadControlledValues();
-  if (button.dataset.view === "persistence-panel") renderPersistence();
+  if (button.dataset.view === "persistence-panel") { renderPersistence(); loadGithubBackupStatus(); }
   if (button.dataset.view === "entries-panel") loadEntries();
   if (button.dataset.view === "publication-panel") loadPublication();
   if (button.dataset.view === "audit-panel") loadAudit();
@@ -60,7 +61,7 @@ function populateUsers(users) {
   select.onchange = () => { localStorage.setItem("acl-editorial-user", select.value); updateRoleIndicator(); if (selectedEntry && !$("#edit-form")) renderPublicEntry(selectedEntry); if ($("#governance-panel").classList.contains("active")) loadControlledValues(); if ($("#publication-panel").classList.contains("active")) loadPublicationEntries(); };
   updateRoleIndicator();
 }
-function updateRoleIndicator() { const role = currentUser()?.role || ""; const node = $("#role-indicator"); node.textContent = roleLabel(role); node.className = `role-indicator role-${role}`; document.body.dataset.editorialRole = role; $("#add-controlled").disabled = !["reviewer","approver","administrator"].includes(role); $("#replace-corpus").disabled = !["approver","administrator"].includes(role); $("#publish-selected").disabled = !["approver","administrator"].includes(role); }
+function updateRoleIndicator() { const role = currentUser()?.role || ""; const node = $("#role-indicator"); node.textContent = roleLabel(role); node.className = `role-indicator role-${role}`; document.body.dataset.editorialRole = role; $("#add-controlled").disabled = !["reviewer","approver","administrator"].includes(role); $("#replace-corpus").disabled = !["approver","administrator"].includes(role); $("#publish-selected").disabled = !["approver","administrator"].includes(role); if ($("#sync-github")) $("#sync-github").disabled = !["approver","administrator"].includes(role); }
 function controlledLabel(category, value) { const item = overviewData?.controlled_options?.[category]?.find(option => option.value === value); return item?.display_label ? `${value} (${item.display_label})` : value; }
 function countedSelect(selector, currentValues = [], globalValues = [], first, currentTotal, globalTotal, label = value => value, contextual = true) {
   const select = $(selector); const previous = select.value;
@@ -102,6 +103,34 @@ $("#save-canonical").addEventListener("click", async () => {
   const button = $("#save-canonical"); button.disabled = true;
   try { const result = await api("/api/editorial/save-canonical", {method:"POST",body:JSON.stringify({actor:actor()})}); await loadOverview(); renderPersistence(result); toast(`TEI/XML guardado com ${n(result.entries)} entradas.`); }
   catch(error){toast(error.message,true);} finally{button.disabled=false;}
+});
+
+function renderGithubBackup(state) {
+  const status = $("#github-backup-status");
+  const detail = $("#github-backup-detail");
+  const button = $("#sync-github");
+  if (!status || !detail || !button) return;
+  const configured = Boolean(state?.configured);
+  status.textContent = state?.message || (configured ? "Ainda não foi executada uma sincronização." : "A sincronização GitHub não está configurada.");
+  status.className = state?.state === "succeeded" ? "persistence-ok" : state?.state === "running" ? "muted" : "persistence-warning";
+  const parts = [];
+  if (state?.finished_at) parts.push(`Última tentativa: ${formatDate(state.finished_at)}`);
+  if (state?.release_id) parts.push(`Release: ${state.release_id}`);
+  if (state?.commit) parts.push(`Commit: ${state.commit.slice(0,12)}`);
+  detail.textContent = parts.join(" · ") || "O backup inclui a base editorial, contas, workflow, auditoria, configuração e a release ativa.";
+  button.disabled = !configured || state?.state === "running" || !["approver","administrator"].includes(currentUser()?.role);
+  if (state?.state === "running" && !backupTimer) backupTimer = setInterval(loadGithubBackupStatus,2000);
+  if (state?.state !== "running" && backupTimer) { clearInterval(backupTimer); backupTimer=null; }
+}
+async function loadGithubBackupStatus() {
+  try { renderGithubBackup(await api("/api/editorial/github-backup/status")); }
+  catch(error) { $("#github-backup-status").textContent=error.message; $("#github-backup-status").className="persistence-warning"; }
+}
+$("#sync-github").addEventListener("click", async () => {
+  if (!confirm("Criar agora um snapshot completo e enviá-lo para o repositório privado do GitHub?")) return;
+  const button=$("#sync-github"); button.disabled=true;
+  try { const state=await api("/api/editorial/github-backup/sync",{method:"POST",body:JSON.stringify({actor:actor()})}); renderGithubBackup(state); toast("Sincronização GitHub iniciada."); }
+  catch(error){toast(error.message,true);await loadGithubBackupStatus();}
 });
 
 async function importTei(mode) {
@@ -157,7 +186,30 @@ async function loadEntries(append = false) {
   $("#status").textContent = "A pesquisar…"; const params = new URLSearchParams({q:$("#query").value,limit:"100",offset:String(entryOffset)});
   const filters = {"#resource-filter":"resource","#workflow-filter":"workflow","#source-status-filter":"editorial_status","#grammar-filter":"grammar","#domain-filter":"domain","#severity-filter":"severity"};
   Object.entries(filters).forEach(([selector,key]) => { if ($(selector).value) params.set(key,$(selector).value); });
-  try { const payload = await api(`/api/editorial/entries?${params}`); const markup = payload.items.map(item => `<button class="result-card ${workflowClass(item.workflow_status)}${item.public_id === selectedId ? " is-selected" : ""}" data-entry-id="${h(item.public_id)}"><span class="result-card__top"><h3>${h(item.lemma || "(sem lema)")}</h3><span class="result-card__source">${h(resourceLabel(item.resource))}</span></span><p class="result-card__grammar">${h(item.grammatical_info || "sem classificação")}</p><small>${h(workflowEntryLabel(item))}${item.error_count ? ` · ${n(item.error_count)} erros` : item.warning_count ? ` · ${n(item.warning_count)} avisos` : ""}</small></button>`).join(""); if (append) $("#entries").insertAdjacentHTML("beforeend",markup); else $("#entries").innerHTML = markup || `<div class="entry-empty"><p>Sem resultados.</p></div>`; entryOffset += payload.items.length; $("#status").textContent = `${n(payload.total)} resultados`; $("#load-more-editorial").hidden = entryOffset >= payload.total; renderEntryFacets(payload.facets,payload.total); document.querySelectorAll("[data-entry-id]:not([data-bound])").forEach(node => { node.dataset.bound = "true"; node.addEventListener("click", () => showEntry(node.dataset.entryId)); }); if (!append && payload.items.length) await showEntry(payload.items[0].public_id); else if (!append) { selectedId=null; selectedEntry=null; $("#detail").innerHTML=`<div class="entry-empty"><h2>Sem resultados</h2><p>Remova alguns filtros ou altere a pesquisa.</p></div>`; } } catch (error) { $("#status").textContent = error.message; }
+  try {
+    const payload = await api(`/api/editorial/entries?${params}`);
+    const markup = payload.items.map(item => {
+      const missingLemma = !String(item.lemma || "").trim();
+      const lemma = missingLemma ? "Entrada sem lema" : item.lemma;
+      const issues = item.error_count ? ` · ${n(item.error_count)} erros` : item.warning_count ? ` · ${n(item.warning_count)} avisos` : "";
+      return `<button class="result-card ${workflowClass(item.workflow_status)}${item.public_id === selectedId ? " is-selected" : ""}" data-entry-id="${h(item.public_id)}"><span class="result-card__top"><h3 class="${missingLemma ? "is-missing-lemma" : ""}">${h(lemma)}</h3><span class="result-card__source">${h(resourceLabel(item.resource))}</span></span><p class="result-card__grammar">${h(item.grammatical_info || "sem classificação")}</p><small>${h(workflowEntryLabel(item))}${issues}</small></button>`;
+    }).join("");
+    if (append) $("#entries").insertAdjacentHTML("beforeend",markup);
+    else $("#entries").innerHTML = markup || `<div class="entry-empty"><p>Sem resultados.</p></div>`;
+    entryOffset += payload.items.length;
+    $("#status").textContent = `${n(payload.total)} resultados`;
+    $("#load-more-editorial").hidden = entryOffset >= payload.total;
+    renderEntryFacets(payload.facets,payload.total);
+    document.querySelectorAll("[data-entry-id]:not([data-bound])").forEach(node => {
+      node.dataset.bound = "true";
+      node.addEventListener("click", () => showEntry(node.dataset.entryId));
+    });
+    if (!append && payload.items.length) await showEntry(payload.items[0].public_id);
+    else if (!append) {
+      selectedId=null; selectedEntry=null;
+      $("#detail").innerHTML=`<div class="entry-empty"><h2>Sem resultados</h2><p>Remova alguns filtros ou altere a pesquisa.</p></div>`;
+    }
+  } catch (error) { $("#status").textContent = error.message; }
 }
 $("#load-more-editorial").addEventListener("click", () => loadEntries(true));
 $("#editorial-alphabet").innerHTML = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map(letter => `<button type="button" data-letter="${letter.toLowerCase()}" aria-pressed="false" title="Mostrar entradas começadas por ${letter}">${letter}</button>`).join("");
@@ -183,21 +235,24 @@ function renderPublicEntry(item) {
   const references = (lexical.references || []).map(ref => `<a href="${publicUrl(`?q=${encodeURIComponent(ref.value)}`)}">${h(ref.value)}</a>`).join(" · ");
   const notes = (lexical.notes || []).map(note => `<p class="entry-note">${h(note.value)}</p>`).join("");
   const etymology = (lexical.etymologies || []).map(value => `<div class="etymology">${h(value)}</div>`).join("");
-  $("#detail").innerHTML = `<div class="entry-toolbar ${workflowClass(item.workflow_status)}"><div class="entry-toolbar__state"><span class="workflow-pill">${h(workflowLabel(item.workflow_status))}</span><span>${h(item.public_id)}</span></div><button id="edit-entry" type="button">Editar</button></div><header class="entry-header ${workflowClass(item.workflow_status)}"><div class="entry-header__meta"><span class="source-badge">${h(resourceLabel(item.resource))}</span><span class="status-badge">${h(entry.source_status_label || entry.source_status || "Sem estado")}</span></div><div class="entry-title-row"><h2>${h(entry.lemma || "(sem lema)")}</h2><span class="entry-grammar">${h(entry.grammatical_label || entry.grammatical_info || "")}</span></div>${variants.length ? `<p class="entry-variants"><strong>Outras formas:</strong> ${h(variants.join(" · "))}</p>` : ""}</header>${glosses ? `<section class="entry-section entry-gloss"><h3 class="entry-section__title">Enquadramento da entrada</h3>${glosses}</section>` : ""}${imageMarkup(lexical.images)}<section class="entry-section"><h3 class="entry-section__title">${senses ? `Aceções e definições <span>(${lexical.senses.length})</span>` : "Informação ortográfica"}</h3>${senses || "<p>Esta entrada não contém aceções lexicográficas.</p>"}</section>${references ? `<section class="entry-section"><h3 class="entry-section__title">Relações e remissões</h3><div class="reference-list">Ver também: ${references}</div></section>` : ""}${notes ? `<section class="entry-section"><h3 class="entry-section__title">Notas</h3>${notes}</section>` : ""}${etymology ? `<section class="entry-section"><h3 class="entry-section__title">Etimologia</h3>${etymology}</section>` : ""}${renderWorkflow(item)}${renderIssues(item)}${renderDiagnostics(item)}${renderHistory(item)}`;
-  $("#detail .entry-toolbar").after($("#detail .workflow-lifecycle"));
-  const editBlocked = ["REMOVED","PUBLISHED"].includes(item.workflow_status); $("#edit-entry").disabled = editBlocked; $("#edit-entry").title = item.workflow_status === "REMOVED" ? "Recupere a entrada antes de a editar" : item.workflow_status === "PUBLISHED" ? "Devolva a entrada para revisão na área Publicação" : ""; $("#edit-entry").addEventListener("click", () => renderEditEntry(item)); bindEntryActions(item);
+  const missingLemma = !String(entry.lemma || "").trim();
+  const lemma = missingLemma ? "Entrada sem lema" : entry.lemma;
+  const editBlocked = ["REMOVED","PUBLISHED"].includes(item.workflow_status);
+  const editTitle = item.workflow_status === "REMOVED" ? "Recupere a entrada antes de a editar" : item.workflow_status === "PUBLISHED" ? "Devolva a entrada para revisão na área Publicação" : "";
+  const metadata = `<section class="entry-metadata" aria-label="Metadados da entrada"><h3>Metadados da entrada</h3><dl><div><dt>Origem</dt><dd>${h(resourceLabel(item.resource))}</dd></div><div><dt>Estado na fonte</dt><dd>${h(entry.source_status_label || entry.source_status || "Sem estado")}</dd></div></dl></section>`;
+  $("#detail").innerHTML = `${renderWorkflow(item,{mode:"view",editBlocked,editTitle})}${metadata}<header class="entry-header lexical-data-card"><span class="content-kicker">Conteúdo lexical</span><div class="entry-title-row"><h2 class="${missingLemma ? "is-missing-lemma" : ""}">${h(lemma)}</h2><span class="entry-grammar">${h(entry.grammatical_label || entry.grammatical_info || "")}</span></div>${missingLemma ? '<p class="missing-data-note">O campo do lema principal está vazio nesta entrada.</p>' : ""}${variants.length ? `<p class="entry-variants"><strong>Outras formas:</strong> ${h(variants.join(" · "))}</p>` : ""}</header><div class="lexical-content">${glosses ? `<section class="entry-section entry-gloss"><h3 class="entry-section__title">Enquadramento da entrada</h3>${glosses}</section>` : ""}${imageMarkup(lexical.images)}<section class="entry-section"><h3 class="entry-section__title">${senses ? `Aceções e definições <span>(${lexical.senses.length})</span>` : "Informação ortográfica"}</h3>${senses || "<p>Esta entrada não contém aceções lexicográficas.</p>"}</section>${references ? `<section class="entry-section"><h3 class="entry-section__title">Relações e remissões</h3><div class="reference-list">Ver também: ${references}</div></section>` : ""}${notes ? `<section class="entry-section"><h3 class="entry-section__title">Notas</h3>${notes}</section>` : ""}${etymology ? `<section class="entry-section"><h3 class="entry-section__title">Etimologia</h3>${etymology}</section>` : ""}</div>${renderIssues(item)}${renderDiagnostics(item)}${renderHistory(item)}`;
+  $("#edit-entry").addEventListener("click", () => renderEditEntry(item));
+  bindEntryActions(item);
 }
 function renderEditEntry(item) {
   const grammarOptions = optionList(overviewData.controlled_options.grammar,item.grammatical_info); const statusOptions = optionList(overviewData.controlled_options.editorial_status,item.editorial_status);
-  $("#detail").innerHTML = `<div class="entry-toolbar"><div class="entry-toolbar__state"><span class="workflow-pill">${h(workflowLabel(item.workflow_status))}</span><strong>Modo de edição</strong></div><button id="cancel-edit" class="secondary" type="button">Cancelar</button></div><form id="edit-form" class="edit-form"><div class="edit-grid"><label>Lema<input id="lemma" value="${h(item.lemma)}" required></label><label>Classe gramatical<select id="grammar">${grammarOptions}</select></label><label>Estado da fonte<select id="source-status">${statusOptions}</select></label></div><h3>Formas e variantes (${item.forms.length})</h3><div class="editable-list">${item.forms.map(form => `<label class="inline-field">${h(form.kind || "Forma")}<input data-form-id="${form.id}" value="${h(form.value)}"></label>`).join("") || "<p>Sem formas.</p>"}</div><h3>Aceções e definições (${item.senses.length})</h3>${item.senses.map(sense => `<section class="sense-editor"><strong>Aceção ${h(sense.number_label || sense.position_path)}</strong><textarea data-sense-id="${sense.id}">${h(sense.definition || sense.gloss || "")}</textarea></section>`).join("")}<h3>Marcas e domínios (${item.labels.length})</h3><div class="editable-list">${item.labels.map(label => `<label class="inline-field">${h(label.label_type)}<input data-label-id="${label.id}" value="${h(label.value)}"></label>`).join("") || "<p>Sem valores.</p>"}</div><h3>Relações e remissões (${item.relations.length})</h3><div class="editable-list">${item.relations.map(relation => `<div class="inline-field"><input data-relation-text="${relation.id}" value="${h(relation.target_text || "")}"><input data-relation-target="${relation.id}" value="${h(relation.target_id || "")}" placeholder="Identificador"></div>`).join("") || "<p>Sem remissões.</p>"}</div><label>Nota da revisão<textarea id="comment"></textarea></label><div class="actions"><button type="submit">Gravar alterações</button><button id="reload-entry" class="secondary" type="button">Recarregar</button></div></form>${renderIssues(item)}${renderDiagnostics(item)}${renderHistory(item)}`;
-  $("#detail .entry-toolbar").classList.add(workflowClass(item.workflow_status));
-  $("#detail .entry-toolbar").insertAdjacentHTML("afterend", renderWorkflow(item));
+  $("#detail").innerHTML = `${renderWorkflow(item,{mode:"edit"})}<form id="edit-form" class="edit-form lexical-data-card"><span class="content-kicker">Edição do conteúdo lexical</span><div class="edit-grid"><label>Lema<input id="lemma" value="${h(item.lemma)}" required></label><label>Classe gramatical<select id="grammar">${grammarOptions}</select></label><label>Estado da fonte<select id="source-status">${statusOptions}</select></label></div><h3>Formas e variantes (${item.forms.length})</h3><div class="editable-list">${item.forms.map(form => `<label class="inline-field">${h(form.kind || "Forma")}<input data-form-id="${form.id}" value="${h(form.value)}"></label>`).join("") || "<p>Sem formas.</p>"}</div><h3>Aceções e definições (${item.senses.length})</h3>${item.senses.map(sense => `<section class="sense-editor"><strong>Aceção ${h(sense.number_label || sense.position_path)}</strong><textarea data-sense-id="${sense.id}">${h(sense.definition || sense.gloss || "")}</textarea></section>`).join("")}<h3>Marcas e domínios (${item.labels.length})</h3><div class="editable-list">${item.labels.map(label => `<label class="inline-field">${h(label.label_type)}<input data-label-id="${label.id}" value="${h(label.value)}"></label>`).join("") || "<p>Sem valores.</p>"}</div><h3>Relações e remissões (${item.relations.length})</h3><div class="editable-list">${item.relations.map(relation => `<div class="inline-field"><input data-relation-text="${relation.id}" value="${h(relation.target_text || "")}"><input data-relation-target="${relation.id}" value="${h(relation.target_id || "")}" placeholder="Identificador"></div>`).join("") || "<p>Sem remissões.</p>"}</div><label>Nota da revisão<textarea id="comment"></textarea></label><div class="actions"><button type="submit">Gravar alterações</button><button id="reload-entry" class="secondary" type="button">Recarregar</button></div></form>${renderIssues(item)}${renderDiagnostics(item)}${renderHistory(item)}`;
   $("#cancel-edit").addEventListener("click", () => renderPublicEntry(item)); $("#reload-entry").addEventListener("click", () => showEntry(item.public_id)); $("#edit-form").addEventListener("submit", event => saveEntry(event,item)); bindEntryActions(item);
 }
 function optionList(items, selected) { const values = [...items.map(item => item.value)]; if (selected && !values.includes(selected)) values.unshift(selected); return `<option value="">Sem valor</option>` + values.map(value => `<option value="${h(value)}"${value === selected ? " selected" : ""}>${h(value)}</option>`).join(""); }
 function workflowTargets(status) { const role=currentUser()?.role === "administrator" ? "approver" : currentUser()?.role; const maps={editor:{DRAFT:["EDITED","REMOVED"],NEEDS_REVISION:["EDITED"],REMOVED:["DRAFT"]},reviewer:{DRAFT:["EDITED","REVIEWED","REMOVED"],EDITED:["NEEDS_REVISION","REVIEWED","REMOVED"],NEEDS_REVISION:["EDITED","REVIEWED"],REMOVED:["DRAFT"]},approver:{DRAFT:["EDITED","REVIEWED","VALIDATED","REMOVED"],EDITED:["NEEDS_REVISION","REVIEWED","VALIDATED","REMOVED"],REVIEWED:["NEEDS_REVISION","VALIDATED","REMOVED"],NEEDS_REVISION:["EDITED","REVIEWED","VALIDATED","REMOVED"],VALIDATED:["NEEDS_REVISION","REMOVED"],REMOVED:["DRAFT"]}}; return maps[role]?.[status] || []; }
 function workflowActionLabel(target) { return {DRAFT:"Recuperar entrada",EDITED:"Marcar como editada",REVIEWED:"Marcar como revista",NEEDS_REVISION:"Pedir revisão",VALIDATED:"Validar entrada",REMOVED:"Apagar entrada"}[target] || workflowLabel(target); }
-function renderWorkflow(item) {
+function renderWorkflow(item, options = {}) {
   const targets = new Set(workflowTargets(item.workflow_status));
   const primary = ["DRAFT","EDITED","REVIEWED","VALIDATED","PUBLISHED"];
   const alternatives = ["NEEDS_REVISION","REMOVED"];
@@ -212,7 +267,10 @@ function renderWorkflow(item) {
   };
   const availableCount = targets.size;
   const publishedNote = item.workflow_status === "PUBLISHED" ? '<p class="workflow-lifecycle__note">As alterações de uma entrada publicada são iniciadas na área <strong>Publicação</strong>.</p>' : "";
-  return `<section class="workflow-lifecycle" aria-label="Ciclo de vida desta entrada"><div class="workflow-lifecycle__heading"><div><span class="eyebrow">Ciclo de vida desta entrada</span><strong>${h(workflowEntryLabel(item))}</strong></div><span>Perfil ativo: <strong>${h(roleLabel(role))}</strong></span></div><div class="workflow-track">${primary.map(state=>stateButton(state)).join("")}</div><div class="workflow-alternatives"><span>Ações alternativas</span>${alternatives.map(state=>stateButton(state,true)).join("")}</div>${!availableCount&&!publishedNote?'<p class="workflow-lifecycle__note">Este perfil não tem transições disponíveis para o estado atual.</p>':publishedNote}</section>`;
+  const modeAction = options.mode === "edit"
+    ? '<button id="cancel-edit" class="secondary" type="button">Sair da edição</button>'
+    : `<button id="edit-entry" type="button"${options.editBlocked ? " disabled" : ""}${options.editTitle ? ` title="${h(options.editTitle)}"` : ""}>Editar conteúdo</button>`;
+  return `<section class="workflow-lifecycle entry-metadata" aria-label="Ciclo de vida desta entrada"><div class="workflow-lifecycle__heading"><div><span class="eyebrow">Ciclo de vida desta entrada</span><span class="entry-technical-id"><strong>Identificador técnico</strong> ${h(item.public_id)}</span></div><div class="workflow-lifecycle__context"><span>Perfil ativo: <strong>${h(roleLabel(role))}</strong></span>${modeAction}</div></div><div class="workflow-track">${primary.map(state=>stateButton(state)).join("")}</div><div class="workflow-alternatives"><span>Ações alternativas</span>${alternatives.map(state=>stateButton(state,true)).join("")}</div>${!availableCount&&!publishedNote?'<p class="workflow-lifecycle__note">Este perfil não tem transições disponíveis para o estado atual.</p>':publishedNote}</section>`;
 }
 function renderIssues(item) { return `<div class="issues">${item.validation_issues.map(issue => `<div class="validation-issue"><strong>${h(issue.severity.toUpperCase())} · ${h(issue.rule_code)}</strong><p>${h(issue.message)}</p>${issue.waiver ? `<small>Dispensado por ${h(issue.waiver.actor)}: ${h(issue.waiver.reason)}</small>` : issue.severity === "error" ? `<button class="secondary compact" type="button" data-waive="${h(issue.rule_code)}">Dispensar com justificação</button>` : ""}</div>`).join("")}</div>`; }
 function renderDiagnostics(item) { const projection = {...item}; delete projection.raw_xml; delete projection.revisions; return `<details class="technical-details"><summary>Identificação e metadados técnicos</summary><div class="diagnostic-grid"><pre>${h(JSON.stringify(projection,null,2))}</pre><pre>${h(item.raw_xml)}</pre></div></details>`; }
@@ -228,7 +286,7 @@ async function loadPublicationEntries(){try{const data=await api("/api/editorial
 async function setPublicationSelection(ids,selected){if(!ids.length){toast("Não existem entradas visíveis para alterar.");return;}try{await api("/api/editorial/publication-selection",{method:"POST",body:JSON.stringify({public_ids:ids,selected,actor:actor()})});await loadPublicationEntries();}catch(error){toast(error.message,true);await loadPublicationEntries();}}
 $("#select-visible").addEventListener("click",()=>setPublicationSelection(publicationItems.map(item=>item.public_id),true));$("#unselect-visible").addEventListener("click",()=>setPublicationSelection(publicationItems.filter(item=>item.selected).map(item=>item.public_id),false));
 $("#publish-selected").addEventListener("click",async()=>{if(!confirm("Publicar agora todas as entradas selecionadas na aplicação pública?"))return;const button=$("#publish-selected");button.disabled=true;try{await api("/api/editorial/publish-selected",{method:"POST",body:JSON.stringify({actor:actor(),description:$("#release-description").value})});publicationTimer=setInterval(loadPublication,1000);loadPublication();}catch(error){toast(error.message,true);updateRoleIndicator();}});
-async function loadPublication(){try{const job=await api("/api/editorial/publish/status");$("#publication-status").textContent=job.message||"Nenhuma operação em curso.";$("#publish-selected").disabled=job.state==="running"||!["approver","administrator"].includes(currentUser()?.role);renderReleases(job.releases||[],job.active_release);await Promise.all([loadPublicationEntries(),loadPublishedEntries()]);if(job.state!=="running"&&publicationTimer){clearInterval(publicationTimer);publicationTimer=null;if(job.state==="succeeded"){toast(job.message);await Promise.all([loadOverview(),loadEntries()]);}if(job.state==="failed")toast(job.message,true);}}catch(error){$("#publication-status").textContent=error.message;}}
+async function loadPublication(){try{const job=await api("/api/editorial/publish/status");$("#publication-status").textContent=job.message||"Nenhuma operação em curso.";$("#publish-selected").disabled=job.state==="running"||!["approver","administrator"].includes(currentUser()?.role);renderGithubBackup(job.repository_backup);renderReleases(job.releases||[],job.active_release);await Promise.all([loadPublicationEntries(),loadPublishedEntries()]);if(job.state!=="running"&&publicationTimer){clearInterval(publicationTimer);publicationTimer=null;if(job.state==="succeeded"){toast(job.message);await Promise.all([loadOverview(),loadEntries()]);}if(job.state==="failed")toast(job.message,true);}}catch(error){$("#publication-status").textContent=error.message;}}
 async function loadPublishedEntries(){const params=new URLSearchParams({workflow:"PUBLISHED",q:$("#published-query").value,limit:"100",offset:"0"});try{const data=await api(`/api/editorial/entries?${params}`);const allowed=["approver","administrator"].includes(currentUser()?.role);$("#published-summary").textContent=`${n(data.total)} entradas publicadas${data.total>data.items.length?` · a mostrar ${n(data.items.length)}`:""}`;$("#published-entries").innerHTML=data.items.map(item=>`<article class="publication-entry workflow-published"><span><strong>${h(item.lemma)}</strong><small>${h(resourceLabel(item.resource))} · ${h(item.grammatical_info||"sem classe")}</small></span><span class="publication-entry__actions"><button type="button" class="secondary compact" data-published-workflow="NEEDS_REVISION" data-published-id="${h(item.public_id)}"${allowed?"":" disabled"}>Pedir revisão</button><button type="button" class="danger compact" data-published-workflow="REMOVED" data-published-id="${h(item.public_id)}"${allowed?"":" disabled"}>Apagar</button></span></article>`).join("")||"<p>Não foram encontradas entradas publicadas.</p>";document.querySelectorAll("[data-published-workflow]").forEach(node=>node.addEventListener("click",()=>changePublishedWorkflow(node.dataset.publishedId,node.dataset.publishedWorkflow)));}catch(error){$("#published-summary").textContent=error.message;}}
 $("#published-search-form").addEventListener("submit",event=>{event.preventDefault();loadPublishedEntries();});
 async function changePublishedWorkflow(id,target){let confirmed=false;if(target==="REMOVED"){if(!confirm("A entrada publicada será assinalada para remoção. Continuar?"))return;if(!confirm("Segunda confirmação: remover esta entrada na próxima publicação?"))return;confirmed=true;}try{await api(`/api/editorial/entries/${encodeURIComponent(id)}/workflow`,{method:"POST",body:JSON.stringify({target,actor:actor(),confirmed,comment:`Decisão de publicação: ${workflowLabel(target)}`})});toast(target==="REMOVED"?"Remoção adicionada às operações pendentes.":"Entrada devolvida para revisão.");await Promise.all([loadOverview(),loadPublicationEntries(),loadPublishedEntries(),loadEntries()]);}catch(error){toast(error.message,true);}}

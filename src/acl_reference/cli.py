@@ -21,6 +21,7 @@ from .publication import (
 from .schema_assets import fetch_official_schema, official_schema_path
 from .spe_importer import import_spe
 from .validation import validate_active_run
+from .repository_backup import RepositoryBackupService, restore_repository_snapshot
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,6 +104,24 @@ def main(argv: list[str] | None = None) -> int:
         "--releases-root", default=os.getenv("RELEASES_ROOT", "releases")
     )
 
+    backup = sub.add_parser("sync-github-backup")
+    backup.add_argument("--repository", default=os.getenv("GITHUB_DATA_REPOSITORY"))
+    backup.add_argument("--releases-root", default=os.getenv("RELEASES_ROOT", "releases"))
+    backup.add_argument("--usage-db", default=os.getenv("USAGE_DB"))
+    backup.add_argument("--runtime-env", default=os.getenv("RUNTIME_ENV_PATH"))
+    backup.add_argument("--remote", default=os.getenv("GITHUB_DATA_REMOTE", "origin"))
+    backup.add_argument("--branch", default=os.getenv("GITHUB_DATA_BRANCH", "main"))
+    backup.add_argument("--actor", required=True)
+    backup.add_argument("--release-id")
+    backup.add_argument("--no-lfs", action="store_true")
+    backup.add_argument("--no-push", action="store_true")
+
+    restore = sub.add_parser("restore-github-backup")
+    restore.add_argument("--repository", default=os.getenv("GITHUB_DATA_REPOSITORY"))
+    restore.add_argument("--releases-root", default=os.getenv("RELEASES_ROOT", "releases"))
+    restore.add_argument("--usage-db", default=os.getenv("USAGE_DB"))
+    restore.add_argument("--env-target")
+
     public = sub.add_parser("serve")
     public.add_argument("--host", default=os.getenv("PUBLIC_HOST", "127.0.0.1"))
     public.add_argument("--port", type=int, default=int(os.getenv("PUBLIC_PORT", "8090")))
@@ -140,6 +159,25 @@ def main(argv: list[str] | None = None) -> int:
             "MEILI_MASTER_KEY", "acl-local-development-key"
         ),
     )
+    editor.add_argument(
+        "--github-repository", default=os.getenv("GITHUB_DATA_REPOSITORY")
+    )
+    editor.add_argument(
+        "--github-remote", default=os.getenv("GITHUB_DATA_REMOTE", "origin")
+    )
+    editor.add_argument(
+        "--github-branch", default=os.getenv("GITHUB_DATA_BRANCH", "main")
+    )
+    editor.add_argument("--github-no-lfs", action="store_true")
+    editor.add_argument("--github-no-push", action="store_true")
+    editor.add_argument(
+        "--github-backup-interval",
+        type=int,
+        default=int(os.getenv("GITHUB_BACKUP_INTERVAL_SECONDS", "1800")),
+        help="Intervalo do backup editorial automático; 0 desativa.",
+    )
+    editor.add_argument("--usage-db", default=os.getenv("USAGE_DB"))
+    editor.add_argument("--runtime-env", default=os.getenv("RUNTIME_ENV_PATH"))
 
     args = parser.parse_args(argv)
     if args.command == "init-db":
@@ -275,6 +313,41 @@ def main(argv: list[str] | None = None) -> int:
                 ensure_ascii=False,
             )
         )
+    elif args.command == "sync-github-backup":
+        service = RepositoryBackupService(
+            db_path=args.db,
+            releases_root=args.releases_root,
+            repository_path=args.repository,
+            usage_db=args.usage_db,
+            runtime_env=args.runtime_env,
+            remote=args.remote,
+            branch=args.branch,
+            require_lfs=not args.no_lfs,
+            push=not args.no_push,
+        )
+        print(
+            json.dumps(
+                service.sync(actor=args.actor, release_id=args.release_id),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    elif args.command == "restore-github-backup":
+        if not args.repository:
+            raise ValueError("Indique --repository ou GITHUB_DATA_REPOSITORY.")
+        print(
+            json.dumps(
+                restore_repository_snapshot(
+                    args.repository,
+                    db_path=args.db,
+                    releases_root=args.releases_root,
+                    usage_db=args.usage_db,
+                    env_target=args.env_target,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     elif args.command == "serve":
         serve(
             meili_url=args.meili_url,
@@ -297,5 +370,13 @@ def main(argv: list[str] | None = None) -> int:
             port=args.port,
             base_path=args.base_path,
             password=args.password,
+            github_repository=args.github_repository,
+            github_remote=args.github_remote,
+            github_branch=args.github_branch,
+            github_require_lfs=not args.github_no_lfs,
+            github_push=not args.github_no_push,
+            github_backup_interval=args.github_backup_interval,
+            usage_db=args.usage_db,
+            runtime_env=args.runtime_env,
         )
     return 0

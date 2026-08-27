@@ -22,6 +22,7 @@ services:
     environment:
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?Defina MEILI_MASTER_KEY no ficheiro .env}
+      USAGE_DB: /app/var/usage.sqlite
     command:
       - acl-reference
       - serve
@@ -59,6 +60,13 @@ services:
     environment:
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?Defina MEILI_MASTER_KEY no ficheiro .env}
+      GITHUB_DATA_REPOSITORY: /app/github-data
+      GITHUB_DATA_REMOTE: ${GITHUB_DATA_REMOTE:-origin}
+      GITHUB_DATA_BRANCH: ${GITHUB_DATA_BRANCH:-main}
+      GITHUB_BACKUP_INTERVAL_SECONDS: ${GITHUB_BACKUP_INTERVAL_SECONDS:-1800}
+      USAGE_DB: /app/var/usage.sqlite
+      RUNTIME_ENV_PATH: /app/runtime.env
+      GIT_SSH_COMMAND: ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=/root/.ssh/known_hosts
     command:
       - acl-reference
       - --db
@@ -88,6 +96,9 @@ services:
       - ./releases:/app/releases
       - ./var:/app/var
       - ./contracts:/app/contracts:ro
+      - ${GITHUB_DATA_REPOSITORY_HOST:-../ACL_Dados_Editorais_GitHub}:/app/github-data
+      - ${GITHUB_SSH_DIRECTORY_HOST:-./deploy/github-ssh}:/root/.ssh:ro
+      - ./.env:/app/runtime.env:ro
     depends_on:
       meilisearch:
         condition: service_healthy

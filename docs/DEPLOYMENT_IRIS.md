@@ -17,13 +17,15 @@ recebem os prefixos por configuração e geram URLs corretos no HTML e JavaScrip
 
 ## Preparação
 
-1. Copiar `.env.example` para `.env`.
-2. Substituir `MEILI_MASTER_KEY` por uma chave aleatória longa.
-3. Definir `EDITORIAL_PASSWORD` com uma palavra-passe longa e exclusiva.
-4. Confirmar `APP_BIND_ADDRESS=0.0.0.0` se o Nginx estiver noutra máquina.
-5. Restringir as portas 5059 e 5060, na firewall, ao endereço do proxy.
-6. Confirmar que `var/editorial.sqlite`, `releases/` e as imagens estão
+1. Confirmar que o clone inclui o `.env` versionado no repositório privado.
+2. Confirmar `APP_BIND_ADDRESS=0.0.0.0` se o Nginx estiver noutra máquina.
+3. Restringir as portas 5059 e 5060, na firewall, ao endereço do proxy.
+4. Confirmar que `var/editorial.sqlite`, `releases/` e as imagens estão
    materializados localmente e não são placeholders OneDrive.
+
+Nesta fase provisória, `EDITORIAL_PASSWORD` e `MEILI_MASTER_KEY` estão no
+`.env` versionado para permitir um restauro simples. O ficheiro só pode
+permanecer no Git enquanto o repositório for privado.
 
 ## Arranque sem corte do serviço anterior
 
@@ -63,7 +65,10 @@ edição, revisão, aprovação ou rollback ao respetivo interveniente.
 
 ## Backup e rollback
 
-- fazer backup SQLite com `.backup`, nunca copiando uma base aberta;
+- o contentor editorial cria uma cópia consistente do SQLite e sincroniza-a
+  automaticamente com o repositório privado dos dados depois de publicar;
+- o servidor deve ter o repositório dos dados clonado no caminho definido por
+  `GITHUB_DATA_REPOSITORY_HOST`, Git LFS e uma deploy key com escrita;
 - preservar todas as releases e o ficheiro `ACTIVE_RELEASE`;
 - preservar `var/usage.sqlite` segundo a política de retenção de IPs;
 - manter a PoC na porta 5058 durante a validação inicial;

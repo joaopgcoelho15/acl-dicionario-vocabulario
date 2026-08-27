@@ -1,5 +1,5 @@
-.env
 .env.*
+!.env
 !.env.example
 *.key
 *.pem
@@ -7,6 +7,9 @@
 *.pfx
 secrets/
 credentials/
+deploy/github-ssh/*
+!deploy/github-ssh/.gitkeep
+!deploy/github-ssh/*.pub
 __pycache__/
 *.pyc
 .pytest_cache/

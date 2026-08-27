@@ -10,8 +10,10 @@ O projeto usa dois repositórios privados com responsabilidades diferentes:
   manifestos, relatórios de validação e histórico de versões dos dados.
 
 O repositório de dados tem acesso restrito. Ficheiros SQLite em utilização,
-logs, endereços IP, `.env`, tokens, chaves, passwords e cópias da base de
-autenticação não podem ser adicionados a nenhum dos repositórios.
+logs, endereços IP, chaves SSH e cópias da base de autenticação não devem ser
+adicionados aos repositórios. Como simplificação provisória, o repositório
+privado do software inclui o `.env` com a password editorial partilhada e a
+chave do Meilisearch.
 
 ## Snapshot de dados
 
@@ -31,24 +33,46 @@ O XML canónico é a fonte de verdade; JSON/NDJSON e CSV são projeções que po
 ser reconstruídas. Ficheiros que excedam os limites normais do GitHub devem ser
 comprimidos ou geridos com Git LFS.
 
-## Sincronização editorial pretendida
+## Sincronização editorial
 
-A sincronização não deve ser silenciosa nem bidirecional. A aplicação deverá
-oferecer operações explícitas e auditadas:
+A aplicação cria automaticamente um snapshot depois de cada publicação ou
+reversão bem-sucedida e, por omissão, a cada 30 minutos para proteger trabalho
+editorial ainda não publicado. O intervalo é configurado por
+`GITHUB_BACKUP_INTERVAL_SECONDS`; o valor `0` desativa o ciclo periódico.
+Também disponibiliza a operação manual
+**Sincronizar agora** em **Dados TEI/XML**.
 
-1. **Guardar no repositório de dados**: validar, produzir snapshot, mostrar o
-   resumo das alterações e criar commit/push com a identidade do responsável;
-2. **Consultar versões**: listar commits/snapshots e respetivos relatórios;
-3. **Restaurar uma versão**: verificar checksums, criar primeiro um backup do
-   estado corrente, importar para uma base temporária, validar e só depois
-   trocar o conjunto editorial ativo;
-4. manter download e upload manual como alternativa.
+O snapshot `current/` contém:
+
+- `editorial.sqlite.xz`: entradas, contas, papéis, workflow, listas,
+  revisões e auditoria;
+- `usage.sqlite.xz`: log de utilização, quando existe;
+- `active-release.tar.xz`: release pública ativa completa, incluindo imagens;
+- `runtime.env`: configuração necessária para arrancar os serviços;
+- `manifest.json`: checksums, tamanhos, data, responsável e release ativa.
+
+Os `.xz` são guardados com Git LFS. Se o push falhar, a publicação continua
+ativa e a interface mostra **Sincronização GitHub pendente**. O aprovador pode
+repetir a operação sem voltar a publicar.
 
 O acesso do servidor ao repositório de dados deve usar uma deploy key dedicada
 com o menor privilégio possível. Uma chave de leitura pode restaurar; uma chave
 de escrita só é necessária para a operação explícita de guardar.
 
-## Segredos e contas
+## Credenciais e contas
+
+### Modo provisório atual
+
+O `.env` versionado permite que o Docker Compose recupere diretamente do GitHub
+a password editorial partilhada e a chave interna do Meilisearch. O utilizador
+HTTP Basic continua a ser `acl`. Não são guardadas no Git chaves SSH pessoais,
+deploy keys ou tokens de acesso ao próprio GitHub.
+
+Este modo pressupõe que o repositório permanece privado. Antes de o tornar
+público, é obrigatório remover o `.env` do histórico e trocar todas as
+credenciais nele contidas.
+
+### Evolução para contas individuais
 
 Passwords nunca são recuperadas em texto original. Num sistema com contas
 individuais, a base guarda apenas hashes lentos e com salt, preferencialmente
@@ -62,18 +86,26 @@ Para restauro existem duas opções seguras:
 - restaurar apenas utilizadores, papéis e estados das contas, obrigando cada
   utilizador a definir uma nova password.
 
-Os secrets operacionais (`EDITORIAL_PASSWORD`, `MEILI_MASTER_KEY`, deploy keys
-e futuras chaves de sessão) devem existir no `.env` protegido do servidor ou
-num gestor de segredos. O restauro completo combina o GitHub com esse backup
-cifrado/gestor de segredos; o GitHub, isoladamente, não deve conter credenciais.
+Quando forem introduzidas contas individuais, os hashes das passwords e as
+futuras chaves de sessão devem sair deste modelo simplificado e passar para a
+base de autenticação e para uma salvaguarda própria.
 
 ## Restauro completo
 
-1. clonar o repositório de software e escolher uma versão/tag conhecida;
-2. recuperar os secrets através do gestor de segredos;
-3. clonar o repositório privado de dados e verificar checksums;
-4. descomprimir e importar o XML canónico para uma nova base editorial;
-5. reconstruir e ativar os índices Meilisearch;
-6. restaurar contas a partir do backup cifrado ou iniciar o fluxo de reposição
-   de passwords;
-7. executar testes de integridade antes de reabrir o serviço.
+1. clonar o repositório do software em `/opt/acl-reference`;
+2. clonar o repositório privado dos dados em
+   `/opt/ACL_Dados_Editorais_GitHub` e executar `git lfs pull`;
+3. executar:
+
+```bash
+chmod +x /opt/acl-reference/deploy/restore-from-github.sh
+/opt/acl-reference/deploy/restore-from-github.sh
+```
+
+O comando verifica os checksums, preserva a base anterior em
+`var/restore-backups/`, restaura SQLite, release e configuração, reconstrói os
+índices Meilisearch e inicia as duas aplicações.
+
+O acesso inicial aos repositórios privados continua a exigir autenticação na
+conta GitHub ou uma deploy key. Essa credencial não pode ser recuperada de um
+repositório que ainda não foi clonado.

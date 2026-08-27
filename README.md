@@ -51,9 +51,11 @@ Com a configuração de produção, os endereços são:
 - `https://iris.sysresearch.org/dicionario-vocabulario/`;
 - `https://iris.sysresearch.org/dicionario-vocabulario/editor/`.
 
-O editor usa temporariamente autenticação HTTP Basic. A palavra-passe real é
-definida apenas no `.env` do servidor e nunca é guardada no Git. O ficheiro
-`.env.example` contém exclusivamente placeholders.
+O editor usa temporariamente autenticação HTTP Basic. Para simplificar o
+restauro nesta fase, o repositório privado inclui o ficheiro `.env` usado pelo
+Docker Compose. O `.env.example` continua a documentar a configuração sem
+credenciais. Esta decisão tem de ser revista antes de o repositório poder ser
+tornado público.
 
 O editor permite alterar lema, formas, classe, estado, definições, marcas e
 remissões. Preserva revisões, identifica o responsável e implementa o workflow
@@ -66,6 +68,9 @@ publicação e a reversão constroem índices versionados, verificam integridade
 contagens e pesquisa antes da troca atómica e só depois mudam o apontador
 ativo. A base SQLite é a versão de trabalho; **Guardar TEI/XML** cria uma
 salvaguarda canónica completa e o respetivo log apenas quando solicitado.
+Depois de cada publicação, a aplicação cria ainda um snapshot restaurável do
+estado editorial e sincroniza-o com o repositório privado dos dados. A mesma
+operação pode ser iniciada manualmente em **Dados TEI/XML**.
 
 ## Interfaces locais
 

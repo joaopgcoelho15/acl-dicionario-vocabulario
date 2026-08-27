@@ -20,6 +20,7 @@ from .publication import (
     set_release_state,
     verify_release,
 )
+from .repository_backup import RepositoryBackupService
 
 
 class PublicationJobManager:
@@ -34,6 +35,7 @@ class PublicationJobManager:
         meili_url: str,
         meili_key: str,
         rng_path: str | Path | None = None,
+        repository_backup: RepositoryBackupService | None = None,
     ):
         self.db_path = Path(db_path)
         self.releases_root = Path(releases_root)
@@ -42,6 +44,7 @@ class PublicationJobManager:
         self.client = MeiliClient(meili_url, meili_key)
         self.editorial = EditorialService(self.db_path)
         self.governance = GovernanceService(self.db_path)
+        self.repository_backup = repository_backup
         self._lock = threading.Lock()
         self._state: dict = self._idle()
 
@@ -62,6 +65,13 @@ class PublicationJobManager:
             state = dict(self._state)
         state["releases"] = release_records(self.db_path)
         state["active_release"] = current_release(self.releases_root)
+        state["repository_backup"] = (
+            self.repository_backup.status() if self.repository_backup else {
+                "configured": False,
+                "state": "disabled",
+                "message": "A sincronização GitHub não está configurada.",
+            }
+        )
         return state
 
     def prepare(self, *, actor: str, description: str) -> dict:
@@ -302,7 +312,24 @@ class PublicationJobManager:
                     ),
                 )
             verb = "reposta" if rollback else "publicada"
-            self._finish("succeeded", f"Versão {release_id} {verb} e verificada.")
+            backup_note = ""
+            if self.repository_backup:
+                self._phase(
+                    "backup",
+                    "A versão está ativa; a sincronizar o backup com o GitHub…",
+                )
+                try:
+                    self.repository_backup.sync(actor=actor, release_id=release_id)
+                    backup_note = " Backup sincronizado com o GitHub."
+                except Exception as backup_error:
+                    backup_note = (
+                        " A publicação está ativa, mas a sincronização GitHub "
+                        f"ficou pendente: {backup_error}"
+                    )
+            self._finish(
+                "succeeded",
+                f"Versão {release_id} {verb} e verificada.{backup_note}",
+            )
         except Exception as exc:
             recovery_error = self._recover_failed_activation(
                 release_id=release_id,
