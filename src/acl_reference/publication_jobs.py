@@ -36,13 +36,14 @@ class PublicationJobManager:
         meili_key: str,
         rng_path: str | Path | None = None,
         repository_backup: RepositoryBackupService | None = None,
+        exports_root: str | Path | None = None,
     ):
         self.db_path = Path(db_path)
         self.releases_root = Path(releases_root)
         self.images_root = Path(images_root) if images_root else None
         self.rng_path = Path(rng_path) if rng_path else None
         self.client = MeiliClient(meili_url, meili_key)
-        self.editorial = EditorialService(self.db_path)
+        self.editorial = EditorialService(self.db_path, exports_root)
         self.governance = GovernanceService(self.db_path)
         self.repository_backup = repository_backup
         self._lock = threading.Lock()
@@ -129,7 +130,7 @@ class PublicationJobManager:
             release_id=release_id,
             message="A indexar a versão aprovada…",
             target=self._publish,
-            args=(release_id, actor, False, ""),
+            args=(release_id, actor, False, "", False),
         )
         return self.status()
 
@@ -153,7 +154,7 @@ class PublicationJobManager:
                 )
         elif state != "approved":
             raise ValueError("Apenas uma candidata aprovada pode ser publicada.")
-        self._publish(release_id, actor, rollback, comment)
+        self._publish(release_id, actor, rollback, comment, False)
         result = self.status()
         if result["state"] == "failed":
             raise RuntimeError(result["message"])
@@ -176,7 +177,7 @@ class PublicationJobManager:
             release_id=release_id,
             message="A reconstruir os índices da versão anterior…",
             target=self._publish,
-            args=(release_id, actor, True, comment),
+            args=(release_id, actor, True, comment, False),
         )
         return self.status()
 
@@ -233,6 +234,7 @@ class PublicationJobManager:
                 description=description or "Publicação editorial",
                 rng_path=self.rng_path,
                 selection_mode=True,
+                audit=False,
             )
             self._phase("approve", "A confirmar a integridade da versão…")
             approve_release(
@@ -241,14 +243,16 @@ class PublicationJobManager:
                 release_id,
                 actor=actor,
                 comment="Aprovação integrada na publicação",
+                audit=False,
             )
         except Exception as exc:
             self._failed(exc)
             return
-        self._publish(release_id, actor, False, description)
+        self._publish(release_id, actor, False, description, True)
 
     def _publish(
-        self, release_id: str, actor: str, rollback: bool, comment: str
+        self, release_id: str, actor: str, rollback: bool, comment: str,
+        bulk: bool = False,
     ) -> None:
         previous_release = current_release(self.releases_root)
         original_state = self._release_state(release_id)
@@ -271,6 +275,7 @@ class PublicationJobManager:
                 "indexed",
                 actor=actor,
                 comment="Índices reconstruídos" if rollback else "Índices criados",
+                audit=not bulk,
             )
             self._phase("test", "A testar os índices antes de os tornar públicos…")
             smoke = self._smoke(path, prepared["indexes"])
@@ -282,6 +287,7 @@ class PublicationJobManager:
                 "tested",
                 actor=actor,
                 comment="Testes automáticos concluídos",
+                audit=not bulk,
             )
             self._phase("activate", "A trocar os índices e ativar a versão testada…")
             self.client.activate_release_indexes(path)
@@ -293,8 +299,34 @@ class PublicationJobManager:
                 verify_integrity=False,
             )
             pointer_activated = True
+            bulk_entries = []
+            if bulk and not rollback:
+                with connect(self.db_path) as details_connection:
+                    bulk_entries = [dict(row) for row in details_connection.execute(
+                        """
+                        SELECT e.public_id,e.lemma,e.workflow_status AS previous_state,
+                               CASE WHEN e.workflow_status='REMOVED'
+                                    THEN 'removal' ELSE 'publication' END AS operation
+                          FROM release_entries re
+                          JOIN entries e ON e.id=re.entry_id
+                         WHERE re.release_id=?
+                         ORDER BY e.lemma_normalized,e.source_ordinal
+                        """,
+                        (release_id,),
+                    )]
             if not rollback:
                 self.editorial.mark_published(release_id, actor=actor)
+            canonical_xml = None
+            if bulk and not rollback:
+                self._phase(
+                    "canonical-xml",
+                    "A gerar e guardar o TEI/XML com os estados publicados…",
+                )
+                canonical_xml = self.editorial.save_canonical(
+                    actor=actor,
+                    rng_path=self.rng_path,
+                    audit=False,
+                )
             with connect(self.db_path) as connection:
                 connection.execute(
                     """
@@ -304,11 +336,36 @@ class PublicationJobManager:
                     ) VALUES (?, ?, ?, 'active', ?, ?)
                     """,
                     (
-                        "RELEASE_ROLLBACK" if rollback else "RELEASE_PUBLISHED",
+                        "RELEASE_ROLLBACK" if rollback else "BULK_PUBLICATION" if bulk else "RELEASE_PUBLISHED",
                         actor,
                         release_id,
                         comment or None,
-                        json.dumps(smoke, ensure_ascii=False),
+                        json.dumps(
+                            {
+                                "release_id": release_id,
+                                "previous_release_id": previous_release,
+                                "entries_total": len(bulk_entries),
+                                "published": sum(
+                                    item["operation"] == "publication"
+                                    for item in bulk_entries
+                                ),
+                                "removed": sum(
+                                    item["operation"] == "removal"
+                                    for item in bulk_entries
+                                ),
+                                "entries": bulk_entries,
+                                "canonical_xml": {
+                                    "xml": canonical_xml["xml_name"],
+                                    "log": canonical_xml["log_name"],
+                                    "sha256": canonical_xml["sha256"],
+                                } if canonical_xml else None,
+                                "verification": verification,
+                                "smoke_test": smoke,
+                            }
+                            if bulk
+                            else smoke,
+                            ensure_ascii=False,
+                        ),
                     ),
                 )
             verb = "reposta" if rollback else "publicada"
@@ -328,7 +385,7 @@ class PublicationJobManager:
                     )
             self._finish(
                 "succeeded",
-                f"Versão {release_id} {verb} e verificada.{backup_note}",
+                f"Versão {release_id} {verb}, TEI/XML guardado e interface pública atualizada.{backup_note}",
             )
         except Exception as exc:
             recovery_error = self._recover_failed_activation(

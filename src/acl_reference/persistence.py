@@ -10,19 +10,11 @@ import xml.etree.ElementTree as ET
 
 from .editorial_db import connect, initialize, transaction
 from .validation import validate_canonical_xml
+from .workflow import WORKFLOW_XML_STATUS
 
 
 TEI = "http://www.tei-c.org/ns/1.0"
 DACL = "http://dacl.zbr.pt/annotations"
-WORKFLOW_XML_STATUS = {
-    "DRAFT": "draft",
-    "EDITED": "edited",
-    "REVIEWED": "reviewed",
-    "NEEDS_REVISION": "needs revision",
-    "VALIDATED": "validated",
-    "PUBLISHED": "published",
-}
-
 ET.register_namespace("", TEI)
 ET.register_namespace("dacl", DACL)
 
@@ -73,6 +65,7 @@ def save_canonical_xml(
     *,
     actor: str,
     rng_path: str | Path | None = None,
+    audit: bool = True,
 ) -> dict:
     """Guarda a versão de trabalho completa em TEI/XML e gera o log associado."""
     initialize(db_path)
@@ -180,21 +173,27 @@ def save_canonical_xml(
         temporary_log.replace(log_path)
 
         with transaction(db_path) as connection:
-            cursor = connection.execute(
-                """
-                INSERT INTO audit_events(
-                    event_type,actor,resulting_state,comment,details_json
-                ) VALUES('CANONICAL_XML_SAVED',?,'synchronized',?,?)
-                """,
-                (
-                    actor,
-                    f"TEI/XML guardado em {xml_name}",
-                    json.dumps(
-                        {"xml": xml_name, "log": log_name, "sha256": digest.hexdigest()},
-                        ensure_ascii=False,
+            if audit:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO audit_events(
+                        event_type,actor,resulting_state,comment,details_json
+                    ) VALUES('CANONICAL_XML_SAVED',?,'synchronized',?,?)
+                    """,
+                    (
+                        actor,
+                        f"TEI/XML guardado em {xml_name}",
+                        json.dumps(
+                            {"xml": xml_name, "log": log_name, "sha256": digest.hexdigest()},
+                            ensure_ascii=False,
+                        ),
                     ),
-                ),
-            )
+                )
+                last_saved_event_id = int(cursor.lastrowid)
+            else:
+                last_saved_event_id = int(connection.execute(
+                    "SELECT COALESCE(MAX(id),0) FROM audit_events"
+                ).fetchone()[0])
             connection.execute(
                 """
                 UPDATE dataset_persistence
@@ -207,7 +206,7 @@ def save_canonical_xml(
                     created.isoformat(),
                     str(xml_path),
                     digest.hexdigest(),
-                    int(cursor.lastrowid),
+                    last_saved_event_id,
                 ),
             )
         return {

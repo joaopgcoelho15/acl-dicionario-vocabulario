@@ -13,7 +13,6 @@ from urllib.parse import parse_qs, unquote, urlparse
 from .editorial_service import EditorialError, EditorialService
 from .publication_jobs import PublicationJobManager
 from .validation import validate_active_run, validation_summary
-from .importer import import_xml, import_xml_batch
 from .repository_backup import RepositoryBackupService
 
 
@@ -68,6 +67,7 @@ def serve_editorial(
         meili_key=meili_key,
         rng_path=rng_path,
         repository_backup=repository_backup,
+        exports_root=service.exports_root,
     )
     handler = type(
         "ACLEditorialHandler",
@@ -101,6 +101,25 @@ class _EditorialHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/" and "x" in parse_qs(parsed.query):
+            key = parse_qs(parsed.query).get("x", [""])[0]
+            if not self.service.readonly_key_is_valid(key):
+                return self._access_denied(
+                    HTTPStatus.FORBIDDEN, "A chave de avaliação é inválida ou está desativada."
+                )
+            token = self.service.readonly_session_token(key)
+            cookie_path = f"{self.base_path}/" if self.base_path else "/"
+            secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", cookie_path)
+            self.send_header(
+                "Set-Cookie",
+                f"acl_editor_readonly={token}; Path={cookie_path}; Max-Age=28800; "
+                f"HttpOnly; SameSite=Strict{secure}",
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
         if parsed.path != "/health" and not self._require_auth():
             return
         try:
@@ -118,6 +137,23 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                 return self._file("assets/acl-logo.png", "image/png", root=self.public_web_root)
             if parsed.path == "/health":
                 return self._json(HTTPStatus.OK, {"status": "ok", "mode": "editable"})
+            if parsed.path == "/api/editorial/session":
+                return self._json(
+                    HTTPStatus.OK,
+                    {
+                        "mode": self.auth_mode,
+                        "read_only": self.auth_mode == "key",
+                    },
+                )
+            if parsed.path == "/api/editorial/admin/access-key":
+                if self.auth_mode != "basic":
+                    return self._access_denied(
+                        HTTPStatus.FORBIDDEN,
+                        "A administração exige autenticação principal.",
+                    )
+                return self._json(
+                    HTTPStatus.OK, self.service.readonly_access_status()
+                )
             if parsed.path == "/api/editorial/overview":
                 return self._json(HTTPStatus.OK, self.service.overview())
             if parsed.path == "/api/editorial/audit":
@@ -129,6 +165,8 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                 content_type = (
                     "application/xml; charset=utf-8"
                     if filename.endswith(".xml")
+                    else "text/csv; charset=utf-8"
+                    if filename.endswith(".csv")
                     else "application/json; charset=utf-8"
                 )
                 return self._file(
@@ -170,6 +208,7 @@ class _EditorialHandler(BaseHTTPRequestHandler):
                         grammar=query.get("grammar", [None])[0],
                         domain=query.get("domain", [None])[0],
                         severity=query.get("severity", [None])[0],
+                        issue_rule=query.get("issue_rule", [None])[0],
                     ),
                 )
             if parsed.path == "/api/editorial/publish/status":
@@ -202,7 +241,7 @@ class _EditorialHandler(BaseHTTPRequestHandler):
 
     def do_PATCH(self):  # noqa: N802
         parsed = urlparse(self.path)
-        if not self._require_auth():
+        if not self._require_auth(write=True):
             return
         try:
             if parsed.path.startswith("/api/editorial/controlled-values/"):
@@ -224,37 +263,50 @@ class _EditorialHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         parsed = urlparse(self.path)
-        if not self._require_auth():
+        if not self._require_auth(write=True):
             return
         try:
-            if parsed.path == "/api/editorial/import":
-                actor = self.headers.get("X-ACL-Actor", "").strip()
-                mode = self.headers.get("X-ACL-Import-Mode", "batch").strip().lower()
-                roles = (
-                    {"approver", "administrator"}
-                    if mode == "replace"
-                    else {"editor", "reviewer", "approver", "administrator"}
+            if parsed.path == "/api/editorial/admin/access-key":
+                payload = self._body()
+                return self._json(
+                    HTTPStatus.OK,
+                    self.service.set_readonly_access_key(
+                        str(payload.get("key") or ""),
+                        actor=str(payload.get("actor") or ""),
+                    ),
                 )
-                self.service.governance.require_user(actor, roles)
+            if parsed.path == "/api/editorial/compare-xml":
+                actor = self.headers.get("X-ACL-Actor", "").strip()
                 filename = Path(self.headers.get("X-ACL-Filename", "upload.xml")).name
                 suffix = ".xz" if filename.lower().endswith(".xz") else ".xml"
                 temporary = self._upload(suffix)
                 try:
-                    result = (
-                        import_xml(
-                            temporary, self.service.db_path, source_label=filename
-                        )
-                        if mode == "replace"
-                        else import_xml_batch(
-                            temporary, self.service.db_path, actor=actor
-                        )
+                    report = self.service.compare_xml(
+                        temporary, actor=actor, source_label=filename
+                    )
+                finally:
+                    temporary.unlink(missing_ok=True)
+                return self._json(HTTPStatus.OK, report)
+            if parsed.path == "/api/editorial/import":
+                actor = self.headers.get("X-ACL-Actor", "").strip()
+                filename = Path(self.headers.get("X-ACL-Filename", "upload.xml")).name
+                suffix = ".xz" if filename.lower().endswith(".xz") else ".xml"
+                temporary = self._upload(suffix)
+                try:
+                    result = self.service.replace_from_xml(
+                        temporary,
+                        actor=actor,
+                        expected_sha256=self.headers.get(
+                            "X-ACL-Comparison-SHA256", ""
+                        ).strip(),
+                        source_label=filename,
                     )
                 finally:
                     temporary.unlink(missing_ok=True)
                 return self._json(
                     HTTPStatus.CREATED,
                     {
-                        "mode": mode,
+                        "mode": "replace",
                         "run_id": result.run_id,
                         "imported": result.imported,
                         "errors": result.errors,
@@ -413,7 +465,7 @@ class _EditorialHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):  # noqa: N802
         parsed = urlparse(self.path)
-        if not self._require_auth():
+        if not self._require_auth(write=True):
             return
         try:
             if parsed.path.startswith("/api/editorial/controlled-values/"):
@@ -494,8 +546,10 @@ class _EditorialHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _require_auth(self) -> bool:
+    def _require_auth(self, *, write: bool = False) -> bool:
+        self.auth_mode = None
         if not self.password:
+            self.auth_mode = "basic"
             return True
         header = self.headers.get("Authorization", "")
         valid = False
@@ -509,10 +563,36 @@ class _EditorialHandler(BaseHTTPRequestHandler):
             except (ValueError, UnicodeDecodeError):
                 valid = False
         if valid:
+            self.auth_mode = "basic"
             return True
-        body = "Autenticação necessária.".encode("utf-8")
-        self.send_response(HTTPStatus.UNAUTHORIZED)
-        self.send_header("WWW-Authenticate", 'Basic realm="ACL - gestao editorial"')
+        cookies = {}
+        for part in self.headers.get("Cookie", "").split(";"):
+            name, separator, value = part.strip().partition("=")
+            if separator:
+                cookies[name] = value
+        if self.service.readonly_session_is_valid(
+            cookies.get("acl_editor_readonly", "")
+        ):
+            self.auth_mode = "key"
+            if write:
+                return self._access_denied(
+                    HTTPStatus.FORBIDDEN,
+                    "Este acesso de avaliação é apenas de leitura.",
+                )
+            return True
+        return self._access_denied(
+            HTTPStatus.UNAUTHORIZED,
+            "Autenticação necessária.",
+            challenge=True,
+        )
+
+    def _access_denied(
+        self, status: HTTPStatus, message: str, *, challenge: bool = False
+    ) -> bool:
+        body = message.encode("utf-8")
+        self.send_response(status)
+        if challenge:
+            self.send_header("WWW-Authenticate", 'Basic realm="ACL - gestao editorial"')
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

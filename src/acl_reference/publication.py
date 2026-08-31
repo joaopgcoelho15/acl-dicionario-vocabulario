@@ -38,6 +38,7 @@ def build_release(
     rng_path: str | Path | None = None,
     resume: bool = False,
     selection_mode: bool = False,
+    audit: bool = True,
 ) -> PublicationResult:
     initialize(db_path)
     GovernanceService(db_path).require_user(
@@ -451,19 +452,20 @@ def build_release(
             "INSERT INTO release_entries(release_id,entry_id) VALUES(?,?)",
             [(release_id, entry_id) for entry_id in sorted(selected_entry_ids)],
         )
-    connection.execute(
-        """
-        INSERT INTO audit_events(
-            event_type, actor, release_id, resulting_state, comment, details_json
-        ) VALUES ('RELEASE_PREPARED', ?, ?, 'candidate', ?, ?)
-        """,
-        (
-            prepared_by,
-            release_id,
-            description,
-            json.dumps(validation.as_dict(), ensure_ascii=False),
-        ),
-    )
+    if audit:
+        connection.execute(
+            """
+            INSERT INTO audit_events(
+                event_type, actor, release_id, resulting_state, comment, details_json
+            ) VALUES ('RELEASE_PREPARED', ?, ?, 'candidate', ?, ?)
+            """,
+            (
+                prepared_by,
+                release_id,
+                description,
+                json.dumps(validation.as_dict(), ensure_ascii=False),
+            ),
+        )
     connection.commit()
     connection.close()
     return PublicationResult(release_id, release_path, counts["entries"], len(issues))
@@ -592,6 +594,7 @@ def approve_release(
     *,
     actor: str,
     comment: str = "",
+    audit: bool = True,
 ) -> dict:
     GovernanceService(db_path).require_user(
         actor, {"approver", "administrator"}
@@ -617,15 +620,16 @@ def approve_release(
         """,
         (actor, comment or None, release_id),
     )
-    connection.execute(
-        """
-        INSERT INTO audit_events(
-            event_type, actor, release_id, previous_state,
-            resulting_state, comment
-        ) VALUES ('RELEASE_APPROVED', ?, ?, 'candidate', 'approved', ?)
-        """,
-        (actor, release_id, comment or None),
-    )
+    if audit:
+        connection.execute(
+            """
+            INSERT INTO audit_events(
+                event_type, actor, release_id, previous_state,
+                resulting_state, comment
+            ) VALUES ('RELEASE_APPROVED', ?, ?, 'candidate', 'approved', ?)
+            """,
+            (actor, release_id, comment or None),
+        )
     connection.commit()
     result = dict(
         connection.execute(
@@ -643,6 +647,7 @@ def set_release_state(
     *,
     actor: str,
     comment: str = "",
+    audit: bool = True,
 ) -> None:
     with connect(db_path) as connection:
         row = connection.execute(
@@ -653,15 +658,16 @@ def set_release_state(
         connection.execute(
             "UPDATE releases SET state=? WHERE release_id=?", (state, release_id)
         )
-        connection.execute(
-            """
-            INSERT INTO audit_events(
-                event_type, actor, release_id, previous_state,
-                resulting_state, comment
-            ) VALUES ('RELEASE_STATE', ?, ?, ?, ?, ?)
-            """,
-            (actor, release_id, row["state"], state, comment or None),
-        )
+        if audit:
+            connection.execute(
+                """
+                INSERT INTO audit_events(
+                    event_type, actor, release_id, previous_state,
+                    resulting_state, comment
+                ) VALUES ('RELEASE_STATE', ?, ?, ?, ?, ?)
+                """,
+                (actor, release_id, row["state"], state, comment or None),
+            )
 
 
 def release_records(db_path: str | Path) -> list[dict]:

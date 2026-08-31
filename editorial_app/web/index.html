@@ -15,15 +15,17 @@
   <div class="institution-bar"><div class="shell institution-bar__inner"><a href="mailto:illlp@acad-ciencias.pt">illlp@acad-ciencias.pt</a><span>Instituto de Lexicologia e Lexicografia da Língua Portuguesa</span></div></div>
   <header class="site-header"><div class="shell site-header__inner">
     <div class="brand"><a class="brand__logo-link" href="https://www.acad-ciencias.pt/" aria-label="Academia das Ciências de Lisboa"><img class="brand__logo" src="acl-logo.png" alt="Símbolo da Academia das Ciências de Lisboa"></a><a class="brand__title" href="./"><strong>Gestão editorial</strong><small>Dicionário e Vocabulário</small></a></div>
-    <div class="editorial-identity"><label for="current-user">Responsável pela operação</label><select id="current-user" aria-label="Responsável pela operação"></select><span id="role-indicator" class="role-indicator"></span></div>
+    <div class="editorial-header-tools">
+      <div class="editorial-identity"><label for="current-user">Responsável pela operação</label><select id="current-user" aria-label="Responsável pela operação"></select><span id="role-indicator" class="role-indicator"></span></div>
+      <div class="help-mode-control"><a id="help-guide" href="https://docs.google.com/document/d/1faitvIO3hH0ltHhxNtyyD7F9vWhKQAYOcKHRPFeMZVI/edit" target="_blank" rel="noreferrer">Ajuda</a><label class="toggle-switch" for="help-toggle"><input id="help-toggle" type="checkbox" role="switch" aria-label="Ativar ajuda contextual"><span class="toggle-switch__track" aria-hidden="true"></span><span id="help-toggle-state">Desativada</span></label></div>
+    </div>
   </div></header>
   <nav class="editorial-nav" aria-label="Navegação editorial"><div class="shell editorial-nav__inner">
     <button class="nav-link active" data-view="governance-panel">Listas controladas</button>
-    <button class="nav-link" data-view="persistence-panel">Dados TEI/XML</button>
-    <button class="nav-link" data-view="entries-panel">Edição e Validação</button>
+    <button class="nav-link" data-view="entries-panel">Edição</button>
     <button class="nav-link" data-view="publication-panel">Publicação</button>
     <button class="nav-link" data-view="audit-panel">Auditoria</button>
-    <a href="../" target="_blank" rel="noreferrer">Interface Pública</a>
+    <button id="admin-nav" class="nav-link" data-view="admin-panel" hidden>Admin</button>
   </div></nav>
 
   <main id="conteudo" class="editorial-main shell">
@@ -31,24 +33,17 @@
     <section id="governance-panel" class="view active">
       <div class="section-heading"><div><p class="eyebrow">Governação dos dados</p><h1>Listas controladas</h1><p>Edite o valor ou a descrição completa. Se um valor ficar igual a outro, a aplicação propõe a união dos dois.</p></div><button id="add-controlled" type="button">Adicionar opção</button></div>
       <div class="governance-toolbar">
-        <label>Lista<select id="controlled-category"><option value="grammar">Classes gramaticais</option><option value="domain">Domínios</option><option value="editorial_status">Estados editoriais</option></select></label>
+        <label>Lista<select id="controlled-category"><option value="grammar">Classes gramaticais</option><option value="domain">Domínios</option></select></label>
         <label>Ordenar por<select id="controlled-sort"><option value="alphabetical">Alfabeto</option><option value="usage">Quantidade de uso</option></select></label>
         <label>Direção<select id="controlled-direction"><option value="asc">Crescente</option><option value="desc">Decrescente</option></select></label>
       </div>
       <div id="controlled-values" class="table-wrap"></div>
     </section>
 
-    <section id="persistence-panel" class="view">
-      <div class="section-heading"><div><p class="eyebrow">Persistência dos dados</p><h1>Dados TEI/XML</h1><p>A base de dados é a versão de trabalho. O TEI/XML é guardado apenas quando executa esta operação.</p></div></div>
-      <section class="card persistence-card"><div><h2>Estado da salvaguarda</h2><p id="persistence-status">A carregar…</p><p id="last-saved" class="muted"></p><div id="saved-downloads" class="actions"></div></div><button id="save-canonical" type="button">Guardar TEI/XML</button></section>
-      <section class="card persistence-card github-backup-card"><div><h2>Backup da aplicação no GitHub</h2><p id="github-backup-status">A carregar o estado da sincronização…</p><p id="github-backup-detail" class="muted">O backup inclui a base editorial, contas, workflow, auditoria, configuração e a release ativa.</p></div><button id="sync-github" type="button">Sincronizar agora</button></section>
-      <section class="card"><h2>Importar dados</h2><p>Uma importação adicional cria apenas entradas novas. A importação inicial substitui o conjunto de trabalho apenas se todo o ficheiro puder ser processado.</p><label for="tei-upload">Ficheiro TEI/XML ou XML.XZ</label><input id="tei-upload" type="file" accept=".xml,.xz,application/xml,application/x-xz"><div class="actions"><button id="import-batch" type="button">Importar entradas novas</button><button id="replace-corpus" class="danger" type="button">Substituir o conjunto de trabalho</button></div><p id="import-status" class="muted"></p></section>
-    </section>
-
     <section id="entries-panel" class="view">
       <section class="editorial-search"><form class="search-box" id="search-form" role="search"><label class="sr-only" for="query">Pesquisar lema ou prefixo</label><input id="query" type="search" autocomplete="off" placeholder="Procure uma palavra"><button type="submit"><span aria-hidden="true">⌕</span><span>Pesquisar</span></button></form>
         <div class="filter-bar"><div class="filters editorial-filters">
-          <label><span>Recurso</span><select id="resource-filter"><option value="">Dicionário e Vocabulário</option></select></label><label><span>Workflow</span><select id="workflow-filter"><option value="">Todos</option></select></label><label><span>Estado editorial</span><select id="source-status-filter"><option value="">Todos</option></select></label><label><span>Classe gramatical</span><select id="grammar-filter"><option value="">Todas</option></select></label><label><span>Domínio</span><select id="domain-filter"><option value="">Todos</option></select></label><label><span>Problemas</span><select id="severity-filter"><option value="">Todos</option></select></label><button id="clear-filters" class="clear-filters clear-all" type="button">Limpar tudo</button>
+          <label><span>Recurso</span><select id="resource-filter"><option value="">Dicionário e Vocabulário</option></select></label><label><span>Estado editorial</span><select id="workflow-filter"><option value="">Todos</option></select></label><label><span>Classe gramatical</span><select id="grammar-filter"><option value="">Todas</option></select></label><label><span>Domínio</span><select id="domain-filter"><option value="">Todos</option></select></label><label><span>Problemas</span><select id="severity-filter"><option value="">Todos</option></select></label><button id="clear-filters" class="clear-filters clear-all" type="button">Limpar tudo</button>
         </div></div>
       </section>
       <p id="status" class="workspace-meta" aria-live="polite"></p>
@@ -56,17 +51,25 @@
     </section>
 
     <section id="publication-panel" class="view">
-      <div class="section-heading"><div><p class="eyebrow">Última etapa do workflow</p><h1>Publicação</h1><p>O aprovador escolhe entradas validadas ou remoções pendentes e atualiza a interface pública numa única operação.</p></div></div>
-      <section class="publication-selection card"><div class="card-heading"><div><h2>Operações prontas para publicar</h2><p id="publication-selection-summary">A carregar…</p></div><div><button id="select-visible" type="button" class="secondary">Selecionar visíveis</button><button id="unselect-visible" type="button" class="secondary">Retirar visíveis</button></div></div><div id="publication-entries" class="publication-entry-list"></div></section>
-      <section class="card publish-action"><div><h2>Publicar seleção</h2><label for="release-description">Descrição da publicação</label><input id="release-description" value="Publicação editorial"><p id="publication-status" class="muted">Nenhuma operação em curso.</p></div><button type="button" id="publish-selected">Publicar entradas selecionadas</button></section>
-      <section class="card"><div class="card-heading"><div><h2>Gerir entradas publicadas</h2><p>O aprovador pode devolver uma entrada publicada para revisão ou assinalá-la para remoção.</p></div><form id="published-search-form" class="compact-search"><input id="published-query" type="search" placeholder="Pesquisar entrada publicada"><button type="submit" class="secondary">Pesquisar</button></form></div><p id="published-summary" class="muted"></p><div id="published-entries" class="publication-entry-list"></div></section>
-      <section class="card releases-card"><h2>Histórico de publicações</h2><p>As versões técnicas são preservadas para auditoria e reversão.</p><div id="releases" class="table-wrap"></div></section>
+      <div class="section-heading"><div><p class="eyebrow">Dados canónicos e serviço público</p><h1>Publicação</h1><p>Guarde ou compare o TEI/XML em qualquer momento. Ao publicar, a aplicação muda as entradas selecionadas para Publicada, gera o novo TEI/XML e atualiza a Interface Pública.</p></div></div>
+      <section class="card persistence-card"><div><h2>Dados TEI/XML</h2><p id="persistence-status">A carregar…</p><p id="last-saved" class="muted"></p><div id="saved-downloads" class="actions"></div></div><button id="save-canonical" type="button">Guardar TEI/XML agora</button></section>
+      <section class="card xml-comparison-card"><h2>Comparar e substituir dados</h2><p>O XML é a fonte canónica. Compare primeiro o ficheiro com a base atual; a importação substitui integralmente o corpus apenas se não existirem alterações por guardar.</p><label for="tei-upload">Ficheiro TEI/XML ou XML.XZ</label><input id="tei-upload" type="file" accept=".xml,.xz,application/xml,application/x-xz"><div class="actions"><button id="compare-xml" type="button">Comparar com os dados atuais</button><button id="replace-corpus" class="danger" type="button" disabled>Substituir dados pelo XML</button></div><p id="import-status" class="muted"></p><div id="xml-comparison" hidden><div id="xml-comparison-summary" class="comparison-summary"></div><div class="card-heading comparison-heading"><div><h3>Diferenças encontradas</h3><p id="xml-comparison-note" class="muted"></p></div><a id="download-comparison-csv" class="button-link secondary" href="#">Descarregar CSV</a></div><div id="xml-comparison-table" class="table-wrap"></div></div></section>
+      <section class="card persistence-card github-backup-card"><div><h2>Backup da aplicação no GitHub</h2><p id="github-backup-status">A carregar o estado da sincronização…</p><p id="github-backup-detail" class="muted">O backup inclui a base editorial, contas, workflow, auditoria, configuração e a release ativa.</p></div><button id="sync-github" type="button">Sincronizar agora</button></section>
+      <section class="publication-selection card"><div class="card-heading"><div><h2>Operações prontas para publicar</h2><p id="publication-selection-summary">A carregar…</p><p class="muted publication-workflow-note">Esta lista usa <strong>Validada</strong> no Estado editorial. Em cada importação, o estado recebido no XML inicializa este estado editorial.</p></div><div><button id="select-visible" type="button" class="secondary">Selecionar visíveis</button><button id="unselect-visible" type="button" class="secondary">Retirar visíveis</button></div></div><div id="publication-entries" class="publication-entry-list"></div></section>
+      <section class="card publish-action"><div><h2>Publicar seleção</h2><p>Esta operação gera e guarda o TEI/XML, atualiza a Interface Pública e só depois deixa as entradas no estado Publicada.</p><label for="release-description">Descrição da publicação</label><input id="release-description" value="Publicação editorial"><p id="publication-status" class="muted">Nenhuma operação em curso.</p></div><button type="button" id="publish-selected">Publicar entradas selecionadas</button></section>
+      <section class="card releases-card"><div class="card-heading"><div><h2>Histórico de publicações</h2><p>As versões técnicas são preservadas para auditoria e reversão.</p></div><a class="button-link" href="../" target="_blank" rel="noreferrer">Abrir Interface Pública</a></div><div id="releases" class="table-wrap"></div></section>
     </section>
 
     <section id="audit-panel" class="view">
       <div class="section-heading"><div><p class="eyebrow">Diagnóstico do sistema</p><h1>Auditoria</h1><p>Resumo do estado dos dados, validações, persistência e atividade editorial.</p></div><button id="refresh-audit" type="button">Atualizar relatório</button></div>
       <div id="audit-summary" class="audit-grid"></div>
-      <section class="card"><div class="card-heading"><div><h2>Atividade recente</h2><p>As 200 operações mais recentes registadas no servidor.</p></div><button id="download-audit" class="secondary" type="button">Descarregar JSON</button></div><div id="audit-events" class="table-wrap"></div></section>
+      <section id="validation-dashboard" class="card validation-dashboard" hidden><div class="card-heading"><div><h2>Problemas de validação</h2><p id="validation-dashboard-summary">Ocorrências e entradas afetadas, agrupadas por regra.</p></div><button id="close-validation-dashboard" class="secondary" type="button">Fechar</button></div><div id="validation-rules" class="table-wrap"></div></section>
+      <section class="card"><div class="card-heading"><div><h2>Atividade recente</h2><p>As 200 operações mais recentes. “Comentário” mostra a nota do responsável ou contexto adicional; descrições automáticas que apenas repetem a operação são omitidas.</p></div><div class="audit-downloads"><button id="download-audit" class="secondary" type="button">Descarregar JSON</button><button id="download-audit-csv" class="secondary" type="button">Descarregar CSV</button></div></div><div id="audit-events" class="table-wrap"></div></section>
+    </section>
+
+    <section id="admin-panel" class="view">
+      <div class="section-heading"><div><p class="eyebrow">Acesso de avaliação</p><h1>Admin</h1><p>Configure uma chave URL temporária para permitir que um agente consulte a aplicação editorial sem poder alterar dados.</p></div></div>
+      <section class="card admin-access-card"><div><h2>Chave de acesso só de leitura</h2><p id="readonly-key-status" class="muted">A carregar…</p><p>Introduza uma chave URL-safe com pelo menos 32 caracteres. Guardar o campo vazio desativa imediatamente este acesso e invalida as sessões existentes.</p><label for="readonly-key">Nova chave<input id="readonly-key" type="password" minlength="32" maxlength="128" autocomplete="new-password" placeholder="32 ou mais caracteres"></label><div class="actions"><button id="generate-readonly-key" type="button" class="secondary">Gerar chave</button><button id="save-readonly-key" type="button">Guardar chave</button><button id="disable-readonly-key" type="button" class="danger">Desativar acesso</button></div><div id="readonly-access-url" class="readonly-access-url" hidden><label for="readonly-url">URL para partilhar</label><input id="readonly-url" type="text" readonly><button id="copy-readonly-url" type="button" class="secondary">Copiar URL</button></div></div></section>
     </section>
   </main>
   <footer class="site-footer"><div class="shell site-footer__grid"><div><img class="footer__logo" src="acl-logo.png" alt="Academia das Ciências de Lisboa"><p>Academia das Ciências de Lisboa<br>Instituto de Lexicologia e Lexicografia da Língua Portuguesa</p></div><p>Aplicação de gestão editorial do DLP e do Vocabulário Ortográfico.</p></div></footer>

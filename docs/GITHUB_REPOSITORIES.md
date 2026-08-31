@@ -2,18 +2,19 @@
 
 ## Separação
 
-O projeto usa dois repositórios privados com responsabilidades diferentes:
+O projeto usa dois repositórios com responsabilidades e níveis de acesso
+diferentes:
 
 - `acl-dicionario-vocabulario`: software, testes, schemas, migrações,
-  configuração sem segredos e documentação;
+  configuração sem segredos e documentação; pode ser público;
 - `acl-dicionario-vocabulario-dados`: XML canónico e representações derivadas,
-  manifestos, relatórios de validação e histórico de versões dos dados.
+  manifestos, relatórios de validação, histórico de versões e configuração
+  operacional necessária ao restauro.
 
-O repositório de dados tem acesso restrito. Ficheiros SQLite em utilização,
-logs, endereços IP, chaves SSH e cópias da base de autenticação não devem ser
-adicionados aos repositórios. Como simplificação provisória, o repositório
-privado do software inclui o `.env` com a password editorial partilhada e a
-chave do Meilisearch.
+O repositório de dados tem acesso restrito e deve permanecer privado. O
+repositório do software nunca deve conter `.env`, passwords, chaves do
+Meilisearch, chaves SSH, deploy keys ou tokens. O único ficheiro de ambiente
+versionado no software é `.env.example`, com valores fictícios.
 
 ## Snapshot de dados
 
@@ -67,16 +68,23 @@ de escrita só é necessária para a operação explícita de guardar.
 
 ## Credenciais e contas
 
-### Modo provisório atual
+### Modelo atual
 
-O `.env` versionado permite que o Docker Compose recupere diretamente do GitHub
-a password editorial partilhada e a chave interna do Meilisearch. O utilizador
-HTTP Basic continua a ser `acl`. Não são guardadas no Git chaves SSH pessoais,
-deploy keys ou tokens de acesso ao próprio GitHub.
+O `.env` real existe em `/opt/acl-reference/.env` no servidor e deve ter
+permissões `0600`. Durante uma sincronização, a aplicação guarda-o como
+`current/runtime.env` apenas no repositório privado dos dados. O script de
+restauro repõe essa cópia antes de iniciar os contentores. Isto preserva o
+restauro simples pelos dois repositórios sem publicar as credenciais juntamente
+com o código.
 
-Este modo pressupõe que o repositório permanece privado. Antes de o tornar
-público, é obrigatório remover o `.env` do histórico e trocar todas as
-credenciais nele contidas.
+O utilizador HTTP Basic continua a ser `acl`. Não são guardadas no Git chaves
+SSH pessoais, deploy keys ou tokens de acesso ao próprio GitHub. Quem tiver
+acesso ao repositório privado dos dados consegue recuperar as credenciais de
+runtime, pelo que esse acesso deve ser concedido apenas a administradores.
+
+Se o repositório de software expuser acidentalmente uma credencial, deve-se
+primeiro rodá-la no servidor e depois removê-la de todo o histórico Git. Tornar
+o repositório privado não invalida cópias que já tenham sido clonadas.
 
 ### Evolução para contas individuais
 

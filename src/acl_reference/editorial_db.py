@@ -247,6 +247,13 @@ CREATE TABLE IF NOT EXISTS dataset_persistence (
 
 INSERT OR IGNORE INTO dataset_persistence(id) VALUES(1);
 
+CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key TEXT PRIMARY KEY,
+    setting_value TEXT NOT NULL,
+    updated_by TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS validation_runs (
     id INTEGER PRIMARY KEY,
     import_run_id INTEGER NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE,

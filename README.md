@@ -27,28 +27,83 @@ Ao publicar, a plataforma cria e verifica uma release imutável, constrói os
 índices no Meilisearch e troca atomicamente a versão ativa. A aplicação
 pública nunca consulta diretamente a base editorial.
 
-O workflow de uma entrada é:
+O XML/TEI é a fonte canónica dos dados lexicais. Na interface editorial, um
+novo XML é primeiro comparado com a base atual, sem a alterar; a comparação
+pode ser descarregada em CSV. Depois de confirmada por um aprovador, a
+importação substitui integralmente o corpus ativo, preservando contas e
+configuração. Se existirem alterações editoriais por guardar, a substituição
+é bloqueada. O atributo de estado recebido no XML inicializa diretamente o
+workflow da respetiva entrada.
+
+Os estados editoriais principais são:
 
 ```text
 Em preparação → Editada → Revista editorialmente → Validada → Publicada
 ```
 
 Existem ainda os estados alternativos **Precisa de revisão** e **Apagada**.
+Na interface **Edição**, cada entrada pode mudar diretamente
+para qualquer estado permitido pelo perfil ativo; não é imposto um percurso
+rígido entre estados. **Publicada** não é apenas uma etiqueta manual: resulta
+da publicação efetiva dos dados na aplicação pública.
+
+A área **Publicação** reúne a gestão do TEI/XML e as operações em lote. O
+utilizador pode guardar ou comparar o XML de trabalho em qualquer momento. O
+aprovador escolhe um subconjunto das entradas validadas e das remoções
+pendentes e publica-o numa única operação funcional, que:
+
+1. cria, verifica e ativa a nova versão na aplicação pública;
+2. muda as entradas selecionadas de **Validada** para **Publicada**;
+3. gera e guarda o TEI/XML canónico completo com os estados atualizados.
+
+O estado **Publicada** nunca pode ser aplicado manualmente em **Edição e
+Validação**. A auditoria guarda um só evento de publicação em lote, com a lista
+completa das entradas afetadas e a identificação do XML gerado.
+
+Em **Auditoria**, a caixa de validação abre um resumo por regra. O total de
+ocorrências pode ser superior ao total de entradas afetadas porque uma mesma
+entrada pode violar várias regras. A pesquisa editorial permite filtrar
+diretamente por cada tipo de problema, como falta de lema ou Relax NG inválido.
+
+## Acesso de avaliação só de leitura
+
+Um utilizador autenticado pela credencial principal pode abrir **Admin** e
+configurar uma chave URL-safe com 32 a 128 caracteres. A aplicação gera um URL
+do tipo:
+
+```text
+https://iris.sysresearch.org/dicionario-vocabulario/editor/?x=CHAVE
+```
+
+O primeiro acesso troca a chave por um cookie de sessão `HttpOnly` e redireciona
+para o URL sem a chave. Esta sessão permite consultar a aplicação editorial,
+mas o servidor recusa todas as operações `POST`, `PATCH` e `DELETE`. O painel
+Admin também não fica acessível. A base guarda apenas hashes da chave e da
+sessão; substituir ou limpar a chave invalida imediatamente os acessos antigos.
+
+Na aplicação pública, o antigo endpoint `/api/debug/entries/{id}` foi removido.
+A comparação XML/JSON usa `/api/entries/{id}/source`, que devolve apenas o
+identificador público e o XML bruto necessário para essa funcionalidade.
 
 ## Repositórios
 
-O projeto está separado em dois repositórios privados:
+O projeto está separado em dois repositórios com responsabilidades e
+níveis de acesso diferentes:
 
-- `acl-dicionario-vocabulario`: software, configuração e documentação;
-- `acl-dicionario-vocabulario-dados`: snapshot restaurável dos dados.
+- `acl-dicionario-vocabulario`: software, configuração sem segredos e
+  documentação; pode ser público;
+- `acl-dicionario-vocabulario-dados`: snapshot restaurável dos dados e da
+  configuração operacional; tem de permanecer privado e com acesso
+  controlado.
 
 O repositório de dados contém a base editorial comprimida, o log de utilização,
 a release pública ativa, as imagens, a configuração de runtime e um manifesto
 com checksums. Os ficheiros grandes são geridos por Git LFS.
 
-Nesta fase, as credenciais de runtime também estão guardadas nos repositórios
-privados para permitir um restauro simples. Por esse motivo, ambos têm de
-permanecer privados.
+As credenciais de runtime nunca são guardadas no repositório do software. O
+ficheiro `.env` real existe no servidor e a sua cópia restaurável fica apenas em
+`current/runtime.env` no repositório privado dos dados. O software contém
+somente `.env.example`, com nomes de variáveis e valores fictícios.
 
 ## Requisitos
 
@@ -165,7 +220,8 @@ install -m 600 /root/.ssh/acl-github/known_hosts \
 ```
 
 O script descarrega os objetos Git LFS, verifica os checksums, restaura as bases
-e a release ativa, reconstrói o índice de pesquisa e inicia as duas aplicações.
+e a release ativa, repõe o `.env` a partir do `runtime.env` do repositório
+privado, reconstrói o índice de pesquisa e inicia as duas aplicações.
 
 Verificar o resultado:
 

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 from pathlib import Path
+import re
 import sqlite3
 import threading
 import xml.etree.ElementTree as ET
@@ -14,6 +16,8 @@ from .normalization import search_key
 from .public_document import build_public_document
 from .labels import domain_label, grammar_label, status_label
 from .persistence import persistence_status, save_canonical_xml
+from .importer import import_xml
+from .xml_comparison import compare_xml_with_database, file_sha256
 
 XML_ID = "{http://www.w3.org/XML/1998/namespace}id"
 TEI = "http://www.tei-c.org/ns/1.0"
@@ -22,26 +26,11 @@ WORKFLOW_STATES = {
     "DRAFT", "EDITED", "REVIEWED", "NEEDS_REVISION",
     "VALIDATED", "PUBLISHED", "REMOVED",
 }
-ROLE_TRANSITIONS = {
-    "editor": {
-        "DRAFT": {"EDITED", "REMOVED"},
-        "NEEDS_REVISION": {"EDITED"},
-        "REMOVED": {"DRAFT"},
-    },
-    "reviewer": {
-        "DRAFT": {"EDITED", "REVIEWED", "REMOVED"},
-        "EDITED": {"NEEDS_REVISION", "REVIEWED", "REMOVED"},
-        "NEEDS_REVISION": {"EDITED", "REVIEWED"},
-        "REMOVED": {"DRAFT"},
-    },
+ROLE_TARGET_STATES = {
+    "editor": {"DRAFT", "EDITED", "REMOVED"},
+    "reviewer": {"DRAFT", "EDITED", "REVIEWED", "NEEDS_REVISION", "REMOVED"},
     "approver": {
-        "DRAFT": {"EDITED", "REVIEWED", "VALIDATED", "REMOVED"},
-        "EDITED": {"NEEDS_REVISION", "REVIEWED", "VALIDATED", "REMOVED"},
-        "REVIEWED": {"NEEDS_REVISION", "VALIDATED", "REMOVED"},
-        "NEEDS_REVISION": {"EDITED", "REVIEWED", "VALIDATED", "REMOVED"},
-        "VALIDATED": {"NEEDS_REVISION", "REMOVED"},
-        "PUBLISHED": {"NEEDS_REVISION", "REMOVED"},
-        "REMOVED": {"DRAFT"},
+        "DRAFT", "EDITED", "REVIEWED", "NEEDS_REVISION", "VALIDATED", "REMOVED",
     },
 }
 
@@ -70,6 +59,96 @@ class EditorialService:
         self.governance = GovernanceService(self.db_path)
         self._facet_index = None
         self._facet_index_lock = threading.Lock()
+
+    @staticmethod
+    def _access_digest(purpose: str, value: str) -> str:
+        return hashlib.sha256(f"acl-editorial:{purpose}:{value}".encode()).hexdigest()
+
+    def readonly_access_status(self) -> dict:
+        with connect(self.db_path) as connection:
+            values = {
+                row["setting_key"]: row["setting_value"]
+                for row in connection.execute(
+                    "SELECT setting_key,setting_value FROM app_settings "
+                    "WHERE setting_key IN ('readonly_key_digest','readonly_session_digest','readonly_key_hint')"
+                )
+            }
+        return {
+            "enabled": bool(
+                values.get("readonly_key_digest")
+                and values.get("readonly_session_digest")
+            ),
+            "hint": values.get("readonly_key_hint"),
+        }
+
+    def set_readonly_access_key(self, key: str, *, actor: str) -> dict:
+        self.governance.require_user(actor)
+        value = str(key or "").strip()
+        if value and (
+            not 32 <= len(value) <= 128
+            or not re.fullmatch(r"[A-Za-z0-9_-]+", value)
+        ):
+            raise EditorialError(
+                "A chave deve ter entre 32 e 128 caracteres e usar apenas letras, números, _ ou -."
+            )
+        with transaction(self.db_path) as connection:
+            if value:
+                settings = {
+                    "readonly_key_digest": self._access_digest("key", value),
+                    "readonly_session_digest": self._access_digest("session", value),
+                    "readonly_key_hint": f"{value[:4]}…{value[-4:]}",
+                }
+                for name, setting_value in settings.items():
+                    connection.execute(
+                        """
+                        INSERT INTO app_settings(setting_key,setting_value,updated_by)
+                        VALUES(?,?,?) ON CONFLICT(setting_key) DO UPDATE SET
+                            setting_value=excluded.setting_value,
+                            updated_by=excluded.updated_by,
+                            updated_at=CURRENT_TIMESTAMP
+                        """,
+                        (name, setting_value, actor),
+                    )
+                event = "READONLY_KEY_ENABLED"
+                resulting = "enabled"
+            else:
+                connection.execute(
+                    "DELETE FROM app_settings WHERE setting_key LIKE 'readonly_%'"
+                )
+                event = "READONLY_KEY_DISABLED"
+                resulting = "disabled"
+            connection.execute(
+                """
+                INSERT INTO audit_events(event_type,actor,resulting_state,comment)
+                VALUES(?,?,?,?)
+                """,
+                (
+                    event,
+                    actor,
+                    resulting,
+                    "Acesso de avaliação só de leitura ativado."
+                    if value else "Acesso de avaliação só de leitura desativado.",
+                ),
+            )
+        return self.readonly_access_status()
+
+    def readonly_key_is_valid(self, value: str) -> bool:
+        candidate = self._access_digest("key", str(value or ""))
+        with connect(self.db_path) as connection:
+            row = connection.execute(
+                "SELECT setting_value FROM app_settings WHERE setting_key='readonly_key_digest'"
+            ).fetchone()
+        return bool(row) and hmac.compare_digest(candidate, row["setting_value"])
+
+    def readonly_session_is_valid(self, value: str) -> bool:
+        with connect(self.db_path) as connection:
+            row = connection.execute(
+                "SELECT setting_value FROM app_settings WHERE setting_key='readonly_session_digest'"
+            ).fetchone()
+        return bool(row) and hmac.compare_digest(str(value or ""), row["setting_value"])
+
+    def readonly_session_token(self, key: str) -> str:
+        return self._access_digest("session", key)
 
     def overview(self) -> dict:
         with connect(self.db_path) as connection:
@@ -168,6 +247,23 @@ class EditorialService:
                         (run_id,),
                     )
                 ],
+                "problems": [
+                    dict(row)
+                    for row in connection.execute(
+                        """
+                        SELECT vi.rule_code AS value,
+                               COUNT(DISTINCT vi.entry_id) AS count,
+                               MIN(vi.severity) AS severity,
+                               MIN(vi.message) AS example
+                          FROM validation_issues vi
+                          JOIN entries ON entries.id=vi.entry_id
+                         WHERE entries.import_run_id=?
+                         GROUP BY vi.rule_code
+                         ORDER BY vi.rule_code
+                        """,
+                        (run_id,),
+                    )
+                ],
             }
             enrichment = connection.execute(
                 """
@@ -229,13 +325,58 @@ class EditorialService:
                     severity=None,
                 )
 
-    def save_canonical(self, *, actor: str, rng_path: str | Path | None = None) -> dict:
+    def save_canonical(
+        self, *, actor: str, rng_path: str | Path | None = None,
+        audit: bool = True,
+    ) -> dict:
         self.governance.require_user(
             actor, {"editor", "reviewer", "approver", "administrator"}
         )
         return save_canonical_xml(
-            self.db_path, self.exports_root, actor=actor, rng_path=rng_path
+            self.db_path, self.exports_root, actor=actor, rng_path=rng_path,
+            audit=audit,
         )
+
+    def compare_xml(
+        self, source: str | Path, *, actor: str, source_label: str | None = None
+    ) -> dict:
+        self.governance.require_user(actor)
+        return compare_xml_with_database(
+            source,
+            self.db_path,
+            self.exports_root,
+            source_label=source_label,
+        )
+
+    def replace_from_xml(
+        self,
+        source: str | Path,
+        *,
+        actor: str,
+        expected_sha256: str,
+        source_label: str | None = None,
+    ):
+        self.governance.require_user(actor, {"approver", "administrator"})
+        state = persistence_status(self.db_path)
+        if state["has_unsaved_changes"]:
+            raise EditorialError(
+                "Existem alterações mais recentes na base de dados. "
+                "Guarde primeiro o TEI/XML antes de substituir os dados."
+            )
+        actual_sha256 = file_sha256(source)
+        if not expected_sha256 or actual_sha256 != expected_sha256:
+            raise EditorialError(
+                "Compare primeiro este mesmo ficheiro XML com os dados atuais."
+            )
+        result = import_xml(
+            source,
+            self.db_path,
+            source_label=source_label,
+            actor=actor,
+        )
+        with self._facet_index_lock:
+            self._facet_index = None
+        return result
 
     def audit_report(self) -> dict:
         with connect(self.db_path) as connection:
@@ -253,9 +394,47 @@ class EditorialService:
                 "SELECT severity AS value,COUNT(*) AS count FROM validation_issues WHERE import_run_id=? GROUP BY severity ORDER BY severity",
                 (run_id,),
             )]
-            events = [dict(row) for row in connection.execute(
-                "SELECT * FROM audit_events ORDER BY id DESC LIMIT 200"
+            validation_rules = [dict(row) for row in connection.execute(
+                """
+                SELECT severity,rule_code,COUNT(*) AS occurrences,
+                       COUNT(DISTINCT entry_id) AS entries,
+                       MIN(message) AS example
+                  FROM validation_issues
+                 WHERE import_run_id=?
+                 GROUP BY severity,rule_code
+                 ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+                          occurrences DESC,rule_code
+                """,
+                (run_id,),
             )]
+            validation_entries = int(connection.execute(
+                "SELECT COUNT(DISTINCT entry_id) FROM validation_issues WHERE import_run_id=?",
+                (run_id,),
+            ).fetchone()[0])
+            events = []
+            for row in connection.execute(
+                """
+                SELECT ae.*, e.public_id AS entry_public_id,
+                       e.lemma AS entry_lemma
+                  FROM audit_events ae
+             LEFT JOIN entries e ON e.id=ae.entry_id
+              ORDER BY ae.id DESC LIMIT 200
+                """
+            ):
+                event = dict(row)
+                # A seleção para uma publicação é uma operação temporária,
+                # não um estado do ciclo editorial. Normaliza também os registos
+                # antigos que guardavam "selected" em resulting_state.
+                if event.get("event_type") == "PUBLICATION_SELECTION":
+                    event["event_type"] = (
+                        "PUBLICATION_SELECTION_ADD"
+                        if event.get("resulting_state") == "selected"
+                        else "PUBLICATION_SELECTION_REMOVE"
+                    )
+                    event["previous_state"] = None
+                    event["resulting_state"] = None
+                event.update(self._audit_subject(event))
+                events.append(event)
             releases = [dict(row) for row in connection.execute(
                 "SELECT release_id,state,created_at,activated_at,description,prepared_by,approved_by FROM releases ORDER BY created_at DESC LIMIT 50"
             )]
@@ -266,8 +445,71 @@ class EditorialService:
             "states": states,
             "resources": resources,
             "validation_issues": issues,
+            "validation_rules": validation_rules,
+            "validation_entries": validation_entries,
             "recent_events": events,
             "releases": releases,
+        }
+
+    @staticmethod
+    def _audit_subject(event: dict) -> dict:
+        """Identifica de forma legível o objeto afetado por uma operação."""
+        if event.get("entry_public_id"):
+            lemma = str(event.get("entry_lemma") or "").strip()
+            return {
+                "subject_type": "entry",
+                "subject_id": event["entry_public_id"],
+                "subject_label": lemma or "Entrada sem lema",
+            }
+        if event.get("release_id"):
+            if event.get("event_type") == "BULK_PUBLICATION":
+                try:
+                    details = json.loads(event.get("details_json") or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    details = {}
+                count = details.get("entries_total")
+                label = "Publicação em lote"
+                if count is not None:
+                    label += f" ({count} entradas)"
+                return {
+                    "subject_type": "release",
+                    "subject_id": event["release_id"],
+                    "subject_label": label,
+                }
+            return {
+                "subject_type": "release",
+                "subject_id": event["release_id"],
+                "subject_label": f"Versão {event['release_id']}",
+            }
+        try:
+            details = json.loads(event.get("details_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            details = {}
+        if str(event.get("event_type") or "").startswith("CONTROLLED_VALUE"):
+            value = details.get("value") or event.get("resulting_state") or event.get("previous_state")
+            category = details.get("category") or "lista controlada"
+            return {
+                "subject_type": "controlled_value",
+                "subject_id": str(value or ""),
+                "subject_label": f"{category}: {value}" if value else str(category),
+            }
+        if event.get("event_type") in {"BATCH_IMPORT", "FULL_IMPORT"}:
+            count = details.get("entries")
+            return {
+                "subject_type": "dataset",
+                "subject_id": "active-dataset",
+                "subject_label": (
+                    f"Substituição do corpus ({count} entradas)"
+                    if event.get("event_type") == "FULL_IMPORT" and count is not None
+                    else f"Importação ({count} entradas)"
+                    if count is not None
+                    else "Conjunto de dados"
+                ),
+            }
+        return {
+            "subject_type": "dataset",
+            "subject_id": "active-dataset",
+            "subject_label": "Conjunto de dados",
         }
 
     def list_entries(
@@ -282,6 +524,7 @@ class EditorialService:
         grammar: str | None = None,
         domain: str | None = None,
         severity: str | None = None,
+        issue_rule: str | None = None,
     ) -> dict:
         normalized = search_key(term)
         limit = max(1, min(limit, 200))
@@ -328,12 +571,18 @@ class EditorialService:
                         "WHERE vi.severity=?)"
                     )
                     params.append(severity)
+                if issue_rule and skipped != "issue_rule":
+                    conditions.append(
+                        "entries.id IN (SELECT vi.entry_id FROM validation_issues vi "
+                        "WHERE vi.rule_code=?)"
+                    )
+                    params.append(issue_rule)
                 condition = " AND " + " AND ".join(conditions) if conditions else ""
                 return condition, params
 
             condition, params = where_without()
             active_filters = any(
-                (resource, workflow_value, editorial_status, grammar, domain, severity)
+                (resource, workflow_value, editorial_status, grammar, domain, severity, issue_rule)
             )
             cached_facets = None
             if active_filters and not normalized:
@@ -346,6 +595,7 @@ class EditorialService:
                     grammar=grammar,
                     domain=domain,
                     severity=severity,
+                    issue_rule=issue_rule,
                 )
             else:
                 total = connection.execute(
@@ -446,6 +696,22 @@ class EditorialService:
                         severity_params,
                     )
                 ]
+                problem_condition, problem_params = where_without("issue_rule")
+                facets["problems"] = [
+                    dict(row)
+                    for row in connection.execute(
+                        f"""
+                        SELECT vi.rule_code AS value,
+                               COUNT(DISTINCT entries.id) AS count
+                          FROM entries
+                          JOIN validation_issues vi ON vi.entry_id=entries.id
+                         WHERE entries.import_run_id=? {problem_condition}
+                         GROUP BY vi.rule_code
+                         ORDER BY vi.rule_code
+                        """,
+                        problem_params,
+                    )
+                ]
         return {
             "total": total,
             "items": [dict(row) for row in rows],
@@ -471,6 +737,7 @@ class EditorialService:
                     for name in (
                         "resource", "workflow", "editorial_status",
                         "grammar", "domain", "severity",
+                        "issue_rule",
                     )
                 }
 
@@ -513,6 +780,16 @@ class EditorialService:
                     (run["id"],),
                 ):
                     add("severity", row["severity"], row["entry_id"])
+                for row in connection.execute(
+                    """
+                    SELECT vi.entry_id,vi.rule_code
+                      FROM validation_issues vi
+                      JOIN entries ON entries.id=vi.entry_id
+                     WHERE entries.import_run_id=?
+                    """,
+                    (run["id"],),
+                ):
+                    add("issue_rule", row["rule_code"], row["entry_id"])
                 self._facet_index = {
                     "signature": signature,
                     "universe": universe,
@@ -528,6 +805,7 @@ class EditorialService:
                 "grammar": "grammar",
                 "domain": "domains",
                 "severity": "severity",
+                "issue_rule": "problems",
             }
             for dimension, values in index["dimensions"].items():
                 matching = index["universe"]
@@ -695,11 +973,16 @@ class EditorialService:
                     )
                 connection.execute(
                     """
-                    INSERT INTO audit_events(event_type,actor,entry_id,resulting_state,comment)
-                    VALUES('PUBLICATION_SELECTION',?,?,?,?)
+                    INSERT INTO audit_events(event_type,actor,entry_id,previous_state,resulting_state,comment)
+                    VALUES(?,?,?,NULL,NULL,NULL)
                     """,
-                    (actor, row["id"], "selected" if selected else "pending",
-                     "Entrada selecionada para publicação" if selected else "Entrada retirada da publicação"),
+                    (
+                        "PUBLICATION_SELECTION_ADD"
+                        if selected
+                        else "PUBLICATION_SELECTION_REMOVE",
+                        actor,
+                        row["id"],
+                    ),
                 )
         return self.publication_entries()
 
@@ -953,9 +1236,11 @@ class EditorialService:
         with transaction(self.db_path) as connection:
             row = self._entry_row(connection, public_id)
             current = row["workflow_status"]
-            if target not in ROLE_TRANSITIONS.get(role, {}).get(current, set()):
+            if target == current:
+                raise InvalidWorkflow("A entrada já se encontra nesse estado.")
+            if target not in ROLE_TARGET_STATES.get(role, set()):
                 raise InvalidWorkflow(
-                    f"O papel {user['role']} não pode executar a transição {current} → {target}."
+                    f"O papel {user['role']} não pode aplicar o estado {target}."
                 )
             if target == "REMOVED" and not confirmed:
                 raise InvalidWorkflow(

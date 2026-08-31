@@ -138,16 +138,14 @@ class _Handler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self._dashboard(parse_qs(parsed.query)),
                 )
-            elif parsed.path.startswith("/api/debug/entries/"):
+            elif parsed.path.startswith("/api/entries/") and parsed.path.endswith("/source"):
+                public_id = unquote(
+                    parsed.path.removeprefix("/api/entries/").removesuffix("/source")
+                )
+                source = self.compatibility.debug_entry(public_id)
                 self._json(
                     HTTPStatus.OK,
-                    self.compatibility.debug_entry(
-                        unquote(
-                            parsed.path.removeprefix(
-                                "/api/debug/entries/"
-                            )
-                        )
-                    ),
+                    {"public_id": public_id, "raw_xml": source.get("raw_xml", "")},
                 )
             elif parsed.path.startswith("/api/resolve/"):
                 resolution = self.compatibility.resolve(

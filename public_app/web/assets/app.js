@@ -591,7 +591,7 @@
       rawXmlLoaded = true;
       const xmlCode = technicalDetails.querySelector("[data-debug-xml]");
       void getJson(
-        appUrl(`/api/debug/entries/${encodeURIComponent(entry.xml_id)}`)
+        appUrl(`/api/entries/${encodeURIComponent(entry.xml_id)}/source`)
       ).then((debugEntry) => {
         xmlCode.textContent = debugEntry.raw_xml || "XML não disponível.";
       }).catch(() => {
