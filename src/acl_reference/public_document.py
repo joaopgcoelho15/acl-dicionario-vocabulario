@@ -120,7 +120,9 @@ def build_public_document(
         "glosses_text": " ".join(entry_glosses),
         "examples_text": " ".join(examples),
         "etymology_text": " ".join(etymologies),
-        "notes_text": " ".join(notes),
+        "notes_text": " ".join(
+            note["value"] for note in notes if note.get("value")
+        ),
         "senses": senses,
         "sense_ids": [
             sense["id"] for sense in senses if sense.get("id")
@@ -170,16 +172,8 @@ def parse_public_xml(raw_xml: str) -> dict:
     _walk_senses(root, senses, (), None)
     return {
         "forms": _deduplicate_dicts(forms),
-        "syllabifications": _unique(
-            _text(node)
-            for node in root.iter()
-            if _local(node.tag) == "syll" and _text(node)
-        ),
-        "pronunciations": _unique(
-            _text(node)
-            for node in root.iter()
-            if _local(node.tag) == "pron" and _text(node)
-        ),
+        "syllabifications": _entry_form_values(root, "syll"),
+        "pronunciations": _entry_form_values(root, "pron"),
         "glosses": _unique(
             _text_without_senses(node)
             for node in root
@@ -194,8 +188,13 @@ def parse_public_xml(raw_xml: str) -> dict:
             for node in root.iter()
             if _local(node.tag) == "etym" and _text(node)
         ),
+        "etymology_items": _unique(
+            {"value": _text(node), "segments": _inline_reference_segments(node)}
+            for node in root.iter()
+            if _local(node.tag) == "etym" and _text(node)
+        ),
         "notes": _unique(
-            _text(node)
+            _note(node)
             for node in _scope_nodes(root)
             if _local(node.tag) == "note" and _text(node)
         ),
@@ -243,6 +242,7 @@ def _walk_senses(
                         "quote": _text(quote),
                         "source": _bibliography(bibliography),
                         "type": quote.get("type") or citation.get("type"),
+                        "has_bibliography": bibliography is not None,
                     }
                 )
         synonyms = []
@@ -275,7 +275,7 @@ def _walk_senses(
                 "synonyms": _deduplicate_dicts(synonyms),
                 "relations": _relations_in_scope(sense),
                 "notes": [
-                    {"type": node.get("type"), "value": _text(node)}
+                    _note(node)
                     for node in scoped_nodes
                     if _local(node.tag) == "note" and _text(node)
                 ],
@@ -320,19 +320,11 @@ def _relations(parent: ET.Element) -> list[dict]:
 
 
 def _relations_in_scope(parent: ET.Element) -> list[dict]:
-    synonym_refs = {
-        id(node)
-        for group in _scope_nodes(parent)
-        if (
-            _local(group.tag) == "syn"
-            or (
-                _local(group.tag) == "xr"
-                and group.get("type") == "synonymy"
-            )
-        )
-        for node in group.iter()
-        if _local(node.tag) == "ref"
-    }
+    """Extrai remissões em ``xr``, sem confundir refs etimológicas."""
+    groups = [
+        node for node in _scope_nodes(parent)
+        if _local(node.tag) == "xr" and node.get("type") != "synonymy"
+    ]
     return _deduplicate_dicts(
         [
             {
@@ -340,10 +332,9 @@ def _relations_in_scope(parent: ET.Element) -> list[dict]:
                 "target_text": _text(node),
                 "target_id": node.get("target"),
             }
-            for node in _scope_nodes(parent)
-            if _local(node.tag) == "ref"
-            and id(node) not in synonym_refs
-            and _text(node)
+            for group in groups
+            for node in group.iter()
+            if _local(node.tag) == "ref" and _text(node)
         ]
     )
 
@@ -361,7 +352,12 @@ def _bibliography(node: ET.Element | None) -> str | None:
         (_text(child) for child in node if _local(child.tag) == "citedRange"),
         "",
     )
+    date = next(
+        (_text(child) for child in node if _local(child.tag) == "date"), ""
+    )
     parts = [part for part in (author, title) if part]
+    if date:
+        parts.append(date)
     value = ", ".join(parts)
     if cited_range:
         value = f"{value}, p. {cited_range}" if value else f"p. {cited_range}"
@@ -377,8 +373,67 @@ def _scope_nodes(parent: ET.Element):
         yield from _scope_nodes(child)
 
 
+def _entry_form_values(root: ET.Element, name: str) -> list[str]:
+    return _unique(
+        _text(node)
+        for form in root
+        if _local(form.tag) == "form"
+        for node in form.iter()
+        if _local(node.tag) == name and _text(node)
+    )
+
+
+def _note(node: ET.Element) -> dict:
+    return {
+        "type": node.get("type"),
+        "value": _text_excluding(node, {"pron"}),
+        "pronunciations": _unique(
+            _text(child)
+            for child in node.iter()
+            if _local(child.tag) == "pron" and _text(child)
+        ),
+    }
+
+
+def _text_excluding(node: ET.Element, excluded: set[str]) -> str:
+    parts: list[str] = [node.text or ""]
+    for child in node:
+        if _local(child.tag) not in excluded:
+            parts.append(_text(child))
+        parts.append(child.tail or "")
+    return clean_text(" ".join(parts))
+
+
+def _inline_reference_segments(node: ET.Element) -> list[dict]:
+    segments: list[dict] = []
+    if node.text:
+        segments.append({"text": node.text})
+    for child in node:
+        text = _text(child)
+        segment = {"text": text}
+        if _local(child.tag) == "ref" and text:
+            segment["query"] = text
+        if text:
+            segments.append(segment)
+        if child.tail:
+            segments.append({"text": child.tail})
+    return segments
+
+
 def _all_relations(root: ET.Element) -> list[dict]:
-    return _relations(root)
+    return _deduplicate_dicts(
+        [
+            {
+                "type": reference.get("type") or group.get("type"),
+                "target_text": _text(reference),
+                "target_id": reference.get("target"),
+            }
+            for group in root.iter()
+            if _local(group.tag) == "xr"
+            for reference in group.iter()
+            if _local(reference.tag) == "ref" and _text(reference)
+        ]
+    )
 
 
 def _images(root: ET.Element) -> list[dict]:

@@ -7,7 +7,7 @@ import re
 from typing import Iterable
 
 from .meili import MeiliClient, MeiliError
-from .labels import domain_label, grammar_label, status_label
+from .labels import domain_label, grammar_label, status_label, usage_label
 from .normalization import search_key
 from .public_document import parse_public_xml
 from .services import ReleaseService
@@ -287,10 +287,8 @@ class PublicCompatibilityService:
                         {
                             "type": label.get("type"),
                             "value": label.get("value"),
-                            "label": (
-                                domain_label(label.get("value"))
-                                if label.get("type") in {"dom", "domain"}
-                                else label.get("value")
+                            "label": usage_label(
+                                label.get("value"), label.get("type")
                             ),
                         }
                         for label in sense.get("labels") or []
@@ -337,10 +335,17 @@ class PublicCompatibilityService:
                     presentation.get("etymologies", [])
                     if presentation else _split_text(item.get("etymology_text"))
                 ),
-                "notes": [
-                    {"type": None, "value": value}
-                    for value in _split_text(item.get("notes_text"))
-                ],
+                "etymology_items": (
+                    presentation.get("etymology_items", [])
+                    if presentation else []
+                ),
+                "notes": (
+                    presentation.get("notes", [])
+                    if presentation else [
+                        {"type": None, "value": value, "pronunciations": []}
+                        for value in _split_text(item.get("notes_text"))
+                    ]
+                ),
                 "related_forms": [],
                 "glosses": item.get("glosses") or [],
                 "gloss_items": [

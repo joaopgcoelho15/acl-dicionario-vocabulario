@@ -243,7 +243,8 @@ dados:
 - imediatamente depois de uma publicação ou reversão bem-sucedida;
 - manualmente através de **Sincronizar agora**;
 - a cada 30 minutos, apenas quando deteta alterações editoriais desde o último
-  snapshot.
+  snapshot;
+- uma vez por dia quando existirem apenas novos logs de utilização.
 
 Uma verificação sem alterações não cria ficheiros, commits ou uploads. O
 intervalo é configurado por `GITHUB_BACKUP_INTERVAL_SECONDS`; o valor `0`

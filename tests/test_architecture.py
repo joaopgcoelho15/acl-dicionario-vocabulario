@@ -250,6 +250,7 @@ class ReferenceArchitectureTests(unittest.TestCase):
         )
         synced = service.sync(actor="aprovador.demo")
         self.assertEqual(synced["state"], "succeeded")
+        self.assertRegex(synced["usage_backup_date"], r"^\d{4}-\d{2}-\d{2}$")
         self.assertTrue((repository / "current" / "editorial.sqlite.xz").is_file())
         self.assertTrue((repository / "current" / "usage-logs.tar.xz").is_file())
         manifest = json.loads((repository / "current" / "manifest.json").read_text())
@@ -278,6 +279,11 @@ class ReferenceArchitectureTests(unittest.TestCase):
         unchanged = service.sync_if_changed(actor="sistema.backup")
         self.assertTrue(unchanged["skipped"])
         self.assertEqual(unchanged["commit"], synced["commit"])
+
+        service._set_state(usage_backup_date="2000-01-01")
+        daily_logs = service.sync_if_changed(actor="sistema.backup.logs")
+        self.assertFalse(daily_logs.get("skipped", False))
+        self.assertEqual(daily_logs["usage_backup_date"], synced["usage_backup_date"])
 
     def test_integrity_failure_identifies_the_changed_file(self):
         import_xml(self.source, self.db)

@@ -262,6 +262,17 @@ STATUSES = {
     "needs revision": "precisa de revisão",
 }
 
+USAGE_MARKS = {
+    "Fig.": "Figurado",
+    "Pop.": "Popular",
+    "Fam.": "Familiar",
+    "Pej.": "Pejorativo",
+    "Deprec.": "Depreciativo",
+    "Desus.": "Desusado",
+    "Ant.": "Antigo",
+    "P. us.": "Pouco usado",
+}
+
 
 def grammar_label(value: str | None) -> str | None:
     return _expanded(value, GRAMMAR)
@@ -273,6 +284,12 @@ def domain_label(value: str | None) -> str | None:
 
 def status_label(value: str | None) -> str | None:
     return _expanded(value, STATUSES)
+
+
+def usage_label(value: str | None, kind: str | None = None) -> str | None:
+    if kind in {"dom", "domain"}:
+        return domain_label(value)
+    return _expanded(value, USAGE_MARKS)
 
 
 def _expanded(value: str | None, catalogue: dict[str, str]) -> str | None:

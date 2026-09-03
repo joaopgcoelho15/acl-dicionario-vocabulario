@@ -713,7 +713,7 @@ button {
 }
 
 .entry-header {
-  padding: 0 0 26px;
+  padding: 0 0 7px;
 }
 
 .entry-header__meta {
@@ -770,7 +770,7 @@ button {
 }
 
 .entry-grammar {
-  margin: 24px 0 0;
+  margin: 10px 0 0;
   color: var(--terracotta);
   font-family: var(--serif);
   font-size: 1rem;
@@ -805,7 +805,7 @@ button {
 }
 
 .entry-section {
-  margin-top: 18px;
+  margin-top: 10px;
 }
 
 .entry-section__title {
@@ -969,9 +969,10 @@ button {
   color: var(--terracotta-deep);
   font-family: var(--serif);
   font-size: .88rem;
-  font-style: italic;
+  font-style: normal;
+  font-weight: 650;
   letter-spacing: 0;
-  text-transform: none;
+  text-transform: uppercase;
 }
 
 .example-list {
@@ -997,6 +998,17 @@ button {
   color: var(--terracotta);
   font-family: var(--sans);
   font-style: normal;
+}
+
+.example__mark svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
 }
 
 .example cite {
@@ -1061,6 +1073,31 @@ button {
   background: transparent;
   font-family: var(--serif);
   font-size: .92rem;
+}
+
+.entry-notes {
+  margin-top: 8px;
+}
+
+.entry-notes .entry-note {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--serif);
+}
+
+.note-marker {
+  color: var(--terracotta);
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.note-pronunciation {
+  color: var(--ink-soft);
 }
 
 .readability-note {

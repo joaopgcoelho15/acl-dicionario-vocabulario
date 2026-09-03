@@ -445,9 +445,10 @@
       }).join("; ");
       const examples = (sense.examples || []).map((example) => {
         const frequent = example.type === "combinacao_frequente";
+        const cited = Boolean(example.has_bibliography || example.source);
         return `<p class="example ${frequent ? "example--combination" : "example--quotation"}">
-          <span class="example__mark" aria-hidden="true">${frequent ? "◌" : "▤"}</span>
-          ${frequent ? `<em>${h(example.quote)}</em>` : `«${h(example.quote)}»`}
+          <span class="example__mark" aria-hidden="true">${exampleIcon(cited ? "citation" : "example")}</span>
+          ${cited ? `«${h(example.quote)}»` : `<em>${h(example.quote)}</em>`}
           ${example.source ? ` <cite>${h(example.source)}</cite>` : ""}
         </p>`;
       }).join("");
@@ -489,16 +490,18 @@
         </section>`;
     }).join("");
 
-    const etymology = (lexical.etymologies || []).map((value) =>
-      `<div class="etymology">${h(value)}</div>`
+    const etymologyItems = lexical.etymology_items || [];
+    const etymology = (etymologyItems.length
+      ? etymologyItems
+      : (lexical.etymologies || []).map((value) => ({ value, segments: [] }))
+    ).map((item) =>
+      `<div class="etymology">${renderLinkedText(item.segments, item.value)}</div>`
     ).join("");
     const entryReferences = (lexical.references || []).map((reference) => {
       const url = appUrl(`/?q=${encodeURIComponent(reference.value)}`);
       return `<a href="${url}" data-reference="${h(reference.value)}">${h(reference.value)}</a>`;
     }).join(" · ");
-    const entryNotes = (lexical.notes || []).map((note) =>
-      `<p class="entry-note">${h(note.value)}</p>`
-    ).join("");
+    const entryNotes = (lexical.notes || []).map(renderEntryNote).join("");
     const variants = (lexical.orthographies || [])
       .map((form) => form.value)
       .filter((value) => value && value !== entry.lemma);
@@ -550,13 +553,13 @@
         <section class="entry-section entry-relations" aria-label="Relações e remissões">
           <div class="reference-list">Ver também: ${entryReferences}</div>
         </section>` : ""}
-      ${entryNotes ? `
-        <section class="entry-section entry-notes" aria-label="Notas">
-          ${entryNotes}
-        </section>` : ""}
       ${etymology ? `
         <section class="entry-section entry-etymology" aria-label="Etimologia">
           ${etymology}
+        </section>` : ""}
+      ${entryNotes ? `
+        <section class="entry-section entry-notes" aria-label="Notas">
+          ${entryNotes}
         </section>` : ""}
       <details class="technical-details">
         <summary>Identificação e metadados técnicos</summary>
@@ -829,6 +832,21 @@
   function fullLabel(value) {
     const match = String(value || "").match(/^[^(]+\s+\((.+)\)$/);
     return match ? match[1] : value;
+  }
+
+  function exampleIcon(kind) {
+    if (kind === "citation") {
+      return `<svg viewBox="0 0 24 24" focusable="false"><path d="M3.5 5.5c3.4-.8 6-.2 8.5 1.6v12c-2.5-1.8-5.1-2.4-8.5-1.6zM20.5 5.5c-3.4-.8-6-.2-8.5 1.6v12c2.5-1.8 5.1-2.4 8.5-1.6z"/></svg>`;
+    }
+    return `<svg viewBox="0 0 24 24" focusable="false"><path d="M19.8 3.5C13.2 4.2 8.3 7.2 6.3 12.6c-.8 2.2-.8 4.3-.8 5.4M6 17.4c3.7-1.9 6.8-4.6 9.5-8.1M7.8 14.8l-3.6 4.4"/></svg>`;
+  }
+
+  function renderEntryNote(note) {
+    const pronunciations = (note.pronunciations || []).map((value) =>
+      `<span class="note-pronunciation">[${h(value.replace(/^\[|\]$/g, ""))}]</span>`
+    ).join(" ");
+    const marker = note.type === "plural" ? `<span class="note-marker">(S)</span>` : "";
+    return `<p class="entry-note${note.type ? ` entry-note--${h(note.type)}` : ""}">${marker}${h(note.value)}${pronunciations ? ` ${pronunciations}` : ""}</p>`;
   }
 
   function readabilityInfo(value) {

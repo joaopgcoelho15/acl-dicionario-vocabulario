@@ -132,11 +132,13 @@ class RepositoryBackupService:
             self._operation_lock.release()
 
     def sync_if_changed(self, *, actor: str) -> dict:
-        """Sincroniza apenas quando o estado editorial mudou desde o snapshot."""
+        """Sincroniza mudanças editoriais e inclui logs pelo menos uma vez/dia."""
         fingerprint = self._source_fingerprint()
         with self._state_lock:
             previous = self._state.get("source_fingerprint")
-        if previous and previous == fingerprint:
+            usage_backup_date = self._state.get("usage_backup_date")
+        usage_due = self._has_usage_logs() and usage_backup_date != _today()
+        if previous and previous == fingerprint and not usage_due:
             return {**self.status(), "skipped": True}
         return self.sync(actor=actor)
 
@@ -172,6 +174,7 @@ class RepositoryBackupService:
                 commit=commit,
                 manifest=manifest,
                 source_fingerprint=self._source_fingerprint(),
+                usage_backup_date=_today() if self._has_usage_logs() else None,
             )
             return result
         except Exception as exc:
@@ -223,6 +226,15 @@ class RepositoryBackupService:
             separators=(",", ":"),
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _has_usage_logs(self) -> bool:
+        if not self.usage_db:
+            return False
+        if self.usage_db.is_file():
+            return True
+        return self.usage_db.is_dir() and any(
+            self.usage_db.glob("usage-*.sqlite")
+        )
 
     def _validate_repository(self) -> Path:
         repository = self.repository_path
@@ -441,6 +453,10 @@ def restore_repository_snapshot(
 def _active_release(releases_root: Path) -> str | None:
     pointer = releases_root / "ACTIVE_RELEASE"
     return pointer.read_text(encoding="utf-8").strip() if pointer.is_file() else None
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _sqlite_backup(source: Path, destination: Path) -> None:

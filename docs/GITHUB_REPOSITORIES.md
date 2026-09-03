@@ -44,10 +44,11 @@ Também disponibiliza a operação manual
 **Sincronizar agora** em **Dados TEI/XML**.
 
 O ciclo periódico compara primeiro o estado da base editorial e só cria um
-commit quando existem alterações desde o último snapshot. Alterações apenas no
-log de acessos não criam versões Git de 30 em 30 minutos; o log é incluído na
-salvaguarda seguinte provocada por trabalho editorial, publicação ou operação
-manual.
+commit quando existem alterações desde o último snapshot. Os logs de utilização,
+que mudam continuamente, são incluídos automaticamente no máximo uma vez por
+dia e também em qualquer salvaguarda provocada por trabalho editorial,
+publicação ou operação manual. Assim, não é criado um objeto Git LFS novo com
+os logs a cada 30 minutos.
 
 O snapshot `current/` contém:
 
