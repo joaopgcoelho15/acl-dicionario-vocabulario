@@ -469,16 +469,18 @@
       const depth = Math.min(Math.max(Number(sense.depth) || 1, 1), 3);
       const number = sense.number ? `${h(sense.number)}.` : "";
       const readability = readabilityInfo(sense.readability);
-      const readabilityId = readability
-        ? `readability-${h(sense.xml_id || String(visibleIndex))}`
-        : "";
+      const readabilityId = readability ? `readability-${visibleIndex}` : "";
       const numberMarkup = readability ? `
         <button class="sense__number sense__number--readability" type="button"
                 aria-expanded="false" aria-controls="${readabilityId}"
-                title="Mostrar informação sobre a facilidade de leitura">${number}</button>`
+                aria-label="Aceção ${number} Mostrar informação de legibilidade: ${h(readability.label)}"
+                title="${h(readability.label)} — mostrar informação de legibilidade">
+          <span>${number}</span>
+          <img src="${appUrl(`/assets/${readability.icon}`)}" alt="" aria-hidden="true">
+        </button>`
         : `<span class="sense__number">${number}</span>`;
       return `${heading}
-        <section class="sense sense--depth-${depth}${number ? "" : " sense--unnumbered"}${focused}" id="${h(sense.xml_id || `sense-${visibleIndex}`)}">
+        <section class="sense sense--depth-${depth}${number ? "" : " sense--unnumbered"}${readability ? " sense--readability" : ""}${focused}" id="${h(sense.xml_id || `sense-${visibleIndex}`)}">
           ${numberMarkup}
           <div>
             <p class="sense__definition">
@@ -871,14 +873,17 @@
     const levels = {
       "#level_very_easy": {
         label: "Muito Fácil",
+        icon: "readability-muito-facil.png",
         description: "Palavra que surge em textos compreensíveis na sua totalidade, ou quase, por todos os falantes nativos, incluindo pessoas com níveis muito baixos de escolaridade e quase sem nenhuma experiência de leitura.",
       },
       "#level_easy": {
         label: "Fácil",
+        icon: "readability-facil.png",
         description: "Palavra que surge em textos compreensíveis na sua totalidade, ou quase, por pessoas com baixos níveis de escolaridade e com pouca experiência de leitura.",
       },
       "#level_plain": {
         label: "Claro",
+        icon: "readability-claro.png",
         description: "Palavra que surge em textos compreensíveis numa primeira leitura por pessoas com a escolaridade obrigatória e com alguma experiência de leitura.",
       },
     };

@@ -866,8 +866,16 @@ button {
   text-align: right;
 }
 
+.sense--readability {
+  grid-template-columns: 60px minmax(0, 1fr);
+}
+
 button.sense__number {
+  display: inline-flex;
   align-self: start;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
   width: 100%;
   margin: 0;
   padding: 0;
@@ -875,6 +883,13 @@ button.sense__number {
   background: transparent;
   cursor: pointer;
   line-height: inherit;
+}
+
+button.sense__number img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  flex: 0 0 24px;
 }
 
 button.sense__number:hover,
