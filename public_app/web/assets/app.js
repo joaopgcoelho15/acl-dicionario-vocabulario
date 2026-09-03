@@ -469,9 +469,17 @@
       const depth = Math.min(Math.max(Number(sense.depth) || 1, 1), 3);
       const number = sense.number ? `${h(sense.number)}.` : "";
       const readability = readabilityInfo(sense.readability);
+      const readabilityId = readability
+        ? `readability-${h(sense.xml_id || String(visibleIndex))}`
+        : "";
+      const numberMarkup = readability ? `
+        <button class="sense__number sense__number--readability" type="button"
+                aria-expanded="false" aria-controls="${readabilityId}"
+                title="Mostrar informação sobre a facilidade de leitura">${number}</button>`
+        : `<span class="sense__number">${number}</span>`;
       return `${heading}
         <section class="sense sense--depth-${depth}${number ? "" : " sense--unnumbered"}${focused}" id="${h(sense.xml_id || `sense-${visibleIndex}`)}">
-          <span class="sense__number">${number}</span>
+          ${numberMarkup}
           <div>
             <p class="sense__definition">
               ${labels ? `<span class="sense__labels">${labels}</span>` : ""}
@@ -483,7 +491,7 @@
             ${examples ? `<div class="example-list">${examples}</div>` : ""}
             ${imageMarkup(sense.images)}
             ${notes ? `<div class="sense__notes">${notes}</div>` : ""}
-            ${readability ? `<aside class="readability-note"><strong>${h(readability.label)}</strong> — ${h(readability.description)}</aside>` : ""}
+            ${readability ? `<aside class="readability-note" id="${readabilityId}" hidden><strong>${h(readability.label)}</strong> — ${h(readability.description)}</aside>` : ""}
             ${sourceAttribution}
             ${references ? `<div class="reference-list">Ver também: ${references}</div>` : ""}
           </div>
@@ -596,6 +604,16 @@
     const linksToggle = els.entry.querySelector("#lexical-links-toggle");
     linksToggle?.addEventListener("change", () => {
       els.entry.classList.toggle("lexical-links-off", !linksToggle.checked);
+    });
+
+    els.entry.querySelectorAll(".sense__number--readability").forEach((button) => {
+      button.addEventListener("click", () => {
+        const note = document.getElementById(button.getAttribute("aria-controls"));
+        if (!note) return;
+        const willOpen = note.hidden;
+        note.hidden = !willOpen;
+        button.setAttribute("aria-expanded", String(willOpen));
+      });
     });
 
     const technicalDetails = els.entry.querySelector(".technical-details");
@@ -846,18 +864,22 @@
       `<span class="note-pronunciation">[${h(value.replace(/^\[|\]$/g, ""))}]</span>`
     ).join(" ");
     const marker = note.type === "plural" ? `<span class="note-marker">(S)</span>` : "";
-    return `<p class="entry-note${note.type ? ` entry-note--${h(note.type)}` : ""}">${marker}${h(note.value)}${pronunciations ? ` ${pronunciations}` : ""}</p>`;
+    return `<p class="entry-note${note.type ? ` entry-note--${h(note.type)}` : ""}">${marker}${renderLinkedText(note.segments, note.value)}${pronunciations ? ` ${pronunciations}` : ""}</p>`;
   }
 
   function readabilityInfo(value) {
     const levels = {
       "#level_very_easy": {
         label: "Muito Fácil",
-        description: "Palavra presente em textos compreensíveis por praticamente todos os falantes nativos.",
+        description: "Palavra que surge em textos compreensíveis na sua totalidade, ou quase, por todos os falantes nativos, incluindo pessoas com níveis muito baixos de escolaridade e quase sem nenhuma experiência de leitura.",
+      },
+      "#level_easy": {
+        label: "Fácil",
+        description: "Palavra que surge em textos compreensíveis na sua totalidade, ou quase, por pessoas com baixos níveis de escolaridade e com pouca experiência de leitura.",
       },
       "#level_plain": {
         label: "Claro",
-        description: "Palavra presente em textos compreensíveis numa primeira leitura por leitores com a escolaridade obrigatória.",
+        description: "Palavra que surge em textos compreensíveis numa primeira leitura por pessoas com a escolaridade obrigatória e com alguma experiência de leitura.",
       },
     };
     return levels[value] || null;

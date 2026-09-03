@@ -387,6 +387,7 @@ def _note(node: ET.Element) -> dict:
     return {
         "type": node.get("type"),
         "value": _text_excluding(node, {"pron"}),
+        "segments": _inline_reference_segments(node, excluded={"pron"}),
         "pronunciations": _unique(
             _text(child)
             for child in node.iter()
@@ -404,17 +405,21 @@ def _text_excluding(node: ET.Element, excluded: set[str]) -> str:
     return clean_text(" ".join(parts))
 
 
-def _inline_reference_segments(node: ET.Element) -> list[dict]:
+def _inline_reference_segments(
+    node: ET.Element, *, excluded: set[str] | None = None
+) -> list[dict]:
+    excluded = excluded or set()
     segments: list[dict] = []
     if node.text:
         segments.append({"text": node.text})
     for child in node:
-        text = _text(child)
-        segment = {"text": text}
-        if _local(child.tag) == "ref" and text:
-            segment["query"] = text
-        if text:
-            segments.append(segment)
+        if _local(child.tag) not in excluded:
+            text = _text(child)
+            segment = {"text": text}
+            if _local(child.tag) == "ref" and text:
+                segment["query"] = text
+            if text:
+                segments.append(segment)
         if child.tail:
             segments.append({"text": child.tail})
     return segments

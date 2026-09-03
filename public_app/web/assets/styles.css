@@ -866,6 +866,25 @@ button {
   text-align: right;
 }
 
+button.sense__number {
+  align-self: start;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  line-height: inherit;
+}
+
+button.sense__number:hover,
+button.sense__number:focus-visible,
+button.sense__number[aria-expanded="true"] {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .sense--unnumbered {
   grid-template-columns: 0 minmax(0, 1fr);
 }
@@ -1107,6 +1126,10 @@ button {
   background: #faf8f7;
   color: var(--ink-soft);
   font-size: .74rem;
+}
+
+.readability-note[hidden] {
+  display: none;
 }
 
 .technical-details {

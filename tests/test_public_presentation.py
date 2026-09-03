@@ -34,6 +34,12 @@ APAGAO_XML = """<entry xmlns="http://www.tei-c.org/ns/1.0" xml:id="DLP-apagao_1"
   <note type="plural">Plural: apagões <pron>ɐpɐˈgõj̃ʃ</pron></note>
 </entry>"""
 
+CASA_NOTES_XML = """<entry xmlns="http://www.tei-c.org/ns/1.0" xml:id="DLP-casa_1">
+  <form><orth>casa</orth></form>
+  <note type="use">Aumentativo: <ref type="entry">casão</ref>, <ref type="entry">casarão</ref></note>
+  <note type="use">Diminutivo: <ref type="entry">casinha</ref>, casita</note>
+</entry>"""
+
 
 class PublicPresentationTests(unittest.TestCase):
     def test_parser_preserves_lexicographic_scope_and_example_source(self):
@@ -87,7 +93,12 @@ class PublicPresentationTests(unittest.TestCase):
         )
         self.assertEqual(
             parsed["notes"],
-            [{"type": "plural", "value": "Plural: apagões", "pronunciations": ["ɐpɐˈgõj̃ʃ"]}],
+            [{
+                "type": "plural",
+                "value": "Plural: apagões",
+                "segments": [{"text": "Plural: apagões "}],
+                "pronunciations": ["ɐpɐˈgõj̃ʃ"],
+            }],
         )
         self.assertEqual(parsed["senses"][0]["examples"][0]["source"], "(SIC Notícias, 28/04/2025)")
         self.assertTrue(parsed["senses"][0]["examples"][0]["has_bibliography"])
@@ -115,6 +126,26 @@ class PublicPresentationTests(unittest.TestCase):
         self.assertEqual(lexical["references"], [])
         self.assertEqual(
             lexical["notes"][0]["pronunciations"], ["ɐpɐˈgõj̃ʃ"]
+        )
+
+    def test_parser_preserves_entry_references_inside_usage_notes(self):
+        parsed = parse_public_xml(CASA_NOTES_XML)
+        self.assertEqual(
+            parsed["notes"][0]["segments"],
+            [
+                {"text": "Aumentativo: "},
+                {"text": "casão", "query": "casão"},
+                {"text": ", "},
+                {"text": "casarão", "query": "casarão"},
+            ],
+        )
+        self.assertEqual(
+            parsed["notes"][1]["segments"],
+            [
+                {"text": "Diminutivo: "},
+                {"text": "casinha", "query": "casinha"},
+                {"text": ", casita"},
+            ],
         )
 
 
