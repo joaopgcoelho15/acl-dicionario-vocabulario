@@ -18,25 +18,10 @@ def build_public_document(
     release_id: str,
     lemma_index: dict[str, str] | None = None,
 ) -> dict:
-    root = ET.fromstring(row["raw_xml"])
-    forms = []
-    for node in root.iter():
-        if _local(node.tag) == "orth" and (value := _text(node)):
-            forms.append(
-                {
-                    "value": value,
-                    "normalized": search_key(value),
-                    "language": node.get(XML_LANG),
-                }
-            )
-
-    senses: list[dict] = []
-    _walk_senses(root, senses, (), None)
-    entry_glosses = [
-        _text_without_senses(node)
-        for node in root
-        if _local(node.tag) == "gloss" and _text_without_senses(node)
-    ]
+    presentation = parse_public_xml(row["raw_xml"])
+    forms = presentation["forms"]
+    senses = presentation["senses"]
+    entry_glosses = presentation["glosses"]
     enrichments = connection.execute(
         """
         SELECT enrichments.*, external_sources.name AS source_name,
@@ -81,18 +66,10 @@ def build_public_document(
             }
         )
 
-    relations = _all_relations(root)
-    images = _images(root)
-    etymologies = [
-        _text(node)
-        for node in root.iter()
-        if _local(node.tag) == "etym" and _text(node)
-    ]
-    notes = [
-        _text(node)
-        for node in root.iter()
-        if _local(node.tag) == "note" and _text(node)
-    ]
+    relations = presentation["all_relations"]
+    images = presentation["images"]
+    etymologies = presentation["etymologies"]
+    notes = presentation["notes"]
     domains = _unique(
         label["value"]
         for sense in senses
@@ -124,6 +101,8 @@ def build_public_document(
         "lemma": row["lemma"],
         "lemma_normalized": row["lemma_normalized"],
         "forms": _deduplicate_dicts(forms),
+        "syllabifications": presentation["syllabifications"],
+        "pronunciations": presentation["pronunciations"],
         "variants": _unique(
             form["value"] for form in forms[1:] if form.get("value")
         ),
@@ -170,6 +149,59 @@ def build_public_document(
     }
 
 
+def parse_public_xml(raw_xml: str) -> dict:
+    """Extrai a estrutura de apresentação sem alterar o TEI/XML de origem.
+
+    A função também é usada ao abrir releases antigas. Assim, melhorias no
+    renderizador lexical ficam disponíveis sem obrigar a republicar o corpus.
+    """
+    root = ET.fromstring(raw_xml)
+    forms = []
+    for node in root.iter():
+        if _local(node.tag) == "orth" and (value := _text(node)):
+            forms.append(
+                {
+                    "value": value,
+                    "normalized": search_key(value),
+                    "language": node.get(XML_LANG),
+                }
+            )
+    senses: list[dict] = []
+    _walk_senses(root, senses, (), None)
+    return {
+        "forms": _deduplicate_dicts(forms),
+        "syllabifications": _unique(
+            _text(node)
+            for node in root.iter()
+            if _local(node.tag) == "syll" and _text(node)
+        ),
+        "pronunciations": _unique(
+            _text(node)
+            for node in root.iter()
+            if _local(node.tag) == "pron" and _text(node)
+        ),
+        "glosses": _unique(
+            _text_without_senses(node)
+            for node in root
+            if _local(node.tag) == "gloss" and _text_without_senses(node)
+        ),
+        "senses": senses,
+        "relations": _relations_in_scope(root),
+        "all_relations": _all_relations(root),
+        "images": _images_in_scope(root),
+        "etymologies": _unique(
+            _text(node)
+            for node in root.iter()
+            if _local(node.tag) == "etym" and _text(node)
+        ),
+        "notes": _unique(
+            _text(node)
+            for node in _scope_nodes(root)
+            if _local(node.tag) == "note" and _text(node)
+        ),
+    }
+
+
 def _walk_senses(
     parent: ET.Element,
     output: list[dict],
@@ -188,20 +220,47 @@ def _walk_senses(
                 (node for node in sense if _local(node.tag) == "gloss"), None
             )
             kind = "gloss"
+        scoped_nodes = list(_scope_nodes(sense))
         labels = [
             {"type": node.get("type") or "usage", "value": _text(node)}
-            for node in sense.iter()
+            for node in scoped_nodes
             if _local(node.tag) == "usg" and _text(node)
         ]
         examples = []
-        for citation in sense.iter():
+        for citation in scoped_nodes:
             if _local(citation.tag) != "cit":
                 continue
             quote = next(
                 (node for node in citation if _local(node.tag) == "quote"), None
             )
             if quote is not None and _text(quote):
-                examples.append({"quote": _text(quote), "source": None})
+                bibliography = next(
+                    (node for node in citation if _local(node.tag) == "bibl"),
+                    None,
+                )
+                examples.append(
+                    {
+                        "quote": _text(quote),
+                        "source": _bibliography(bibliography),
+                        "type": quote.get("type") or citation.get("type"),
+                    }
+                )
+        synonyms = []
+        for synonym_group in [node for node in scoped_nodes if (
+            _local(node.tag) == "syn"
+            or (
+                _local(node.tag) == "xr"
+                and node.get("type") == "synonymy"
+            )
+        )]:
+            synonyms.extend(
+                {
+                    "value": _text(node),
+                    "target": node.get("target"),
+                }
+                for node in synonym_group.iter()
+                if _local(node.tag) == "ref" and _text(node)
+            )
         output.append(
             {
                 "id": sense.get(XML_ID),
@@ -213,12 +272,15 @@ def _walk_senses(
                 "definition_kind": kind if definition_node is not None else None,
                 "labels": _deduplicate_dicts(labels),
                 "examples": _deduplicate_dicts(examples),
-                "relations": _relations(sense),
+                "synonyms": _deduplicate_dicts(synonyms),
+                "relations": _relations_in_scope(sense),
                 "notes": [
                     {"type": node.get("type"), "value": _text(node)}
-                    for node in sense.iter()
+                    for node in scoped_nodes
                     if _local(node.tag) == "note" and _text(node)
                 ],
+                "readability": sense.get("ana"),
+                "images": _images_in_scope(sense),
             }
         )
         _walk_senses(sense, output, path, section)
@@ -257,6 +319,64 @@ def _relations(parent: ET.Element) -> list[dict]:
     )
 
 
+def _relations_in_scope(parent: ET.Element) -> list[dict]:
+    synonym_refs = {
+        id(node)
+        for group in _scope_nodes(parent)
+        if (
+            _local(group.tag) == "syn"
+            or (
+                _local(group.tag) == "xr"
+                and group.get("type") == "synonymy"
+            )
+        )
+        for node in group.iter()
+        if _local(node.tag) == "ref"
+    }
+    return _deduplicate_dicts(
+        [
+            {
+                "type": node.get("type"),
+                "target_text": _text(node),
+                "target_id": node.get("target"),
+            }
+            for node in _scope_nodes(parent)
+            if _local(node.tag) == "ref"
+            and id(node) not in synonym_refs
+            and _text(node)
+        ]
+    )
+
+
+def _bibliography(node: ET.Element | None) -> str | None:
+    if node is None:
+        return None
+    author = next(
+        (_text(child) for child in node if _local(child.tag) == "author"), ""
+    )
+    title = next(
+        (_text(child) for child in node if _local(child.tag) == "title"), ""
+    )
+    cited_range = next(
+        (_text(child) for child in node if _local(child.tag) == "citedRange"),
+        "",
+    )
+    parts = [part for part in (author, title) if part]
+    value = ", ".join(parts)
+    if cited_range:
+        value = f"{value}, p. {cited_range}" if value else f"p. {cited_range}"
+    return f"({value})" if value else _text(node) or None
+
+
+def _scope_nodes(parent: ET.Element):
+    """Percorre apenas o conteúdo pertencente ao nó, sem subaceções/re."""
+    for child in parent:
+        if _local(child.tag) in {"sense", "re"}:
+            continue
+        yield child
+        yield from _scope_nodes(child)
+
+
 def _all_relations(root: ET.Element) -> list[dict]:
     return _relations(root)
 
@@ -264,6 +384,23 @@ def _all_relations(root: ET.Element) -> list[dict]:
 def _images(root: ET.Element) -> list[dict]:
     output = []
     for node in root.iter():
+        if _local(node.tag) not in {"graphic", "media"}:
+            continue
+        value = node.get("url") or node.get("target")
+        if value:
+            output.append(
+                {
+                    "path": value,
+                    "mime_type": node.get("mimeType"),
+                    "description": node.get("n"),
+                }
+            )
+    return _deduplicate_dicts(output)
+
+
+def _images_in_scope(root: ET.Element) -> list[dict]:
+    output = []
+    for node in _scope_nodes(root):
         if _local(node.tag) not in {"graphic", "media"}:
             continue
         value = node.get("url") or node.get("target")

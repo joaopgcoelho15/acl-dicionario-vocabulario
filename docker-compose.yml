@@ -22,7 +22,7 @@ services:
     environment:
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?Defina MEILI_MASTER_KEY no ficheiro .env}
-      USAGE_DB: /app/var/usage.sqlite
+      USAGE_DB: /app/var/usage-logs
     command:
       - acl-reference
       - serve
@@ -35,7 +35,7 @@ services:
       - --base-path
       - ${PUBLIC_BASE_PATH:-/dicionario-vocabulario}
       - --usage-db
-      - /app/var/usage.sqlite
+      - /app/var/usage-logs
       - --meili-url
       - http://meilisearch:7700
       - --meili-key
@@ -64,7 +64,7 @@ services:
       GITHUB_DATA_REMOTE: ${GITHUB_DATA_REMOTE:-origin}
       GITHUB_DATA_BRANCH: ${GITHUB_DATA_BRANCH:-main}
       GITHUB_BACKUP_INTERVAL_SECONDS: ${GITHUB_BACKUP_INTERVAL_SECONDS:-1800}
-      USAGE_DB: /app/var/usage.sqlite
+      USAGE_DB: /app/var/usage-logs
       RUNTIME_ENV_PATH: /app/runtime.env
       GIT_SSH_COMMAND: ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=/root/.ssh/known_hosts
     command:

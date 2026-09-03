@@ -53,7 +53,7 @@ O snapshot `current/` contém:
 
 - `editorial.sqlite.xz`: entradas, contas, papéis, workflow, listas,
   revisões e auditoria;
-- `usage.sqlite.xz`: log de utilização, quando existe;
+- `usage-logs.tar.xz`: ficheiros SQLite semanais do log de utilização, quando existem;
 - `active-release.tar.xz`: release pública ativa completa, incluindo imagens;
 - `runtime.env`: configuração necessária para arrancar os serviços;
 - `manifest.json`: checksums, tamanhos, data, responsável e release ativa.

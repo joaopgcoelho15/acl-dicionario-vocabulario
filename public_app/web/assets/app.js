@@ -406,10 +406,6 @@
   function renderEntry(entry, focusSenseId) {
     els.entry.classList.remove("lexical-links-off");
     const lexical = entry.lexical || {};
-    const pronunciation = [
-      ...(lexical.syllabifications || []).map((value) => `Sílabas: ${value}`),
-      ...(lexical.pronunciations || []).map((value) => `Pronúncia: ${value}`),
-    ];
     const source = sourceLabel(entry);
     const imageMarkup = (images = []) => {
       const unique = [...new Map(images.map((image) => [
@@ -436,15 +432,25 @@
       visibleIndex += 1;
       let heading = "";
       if (sense.section && sense.section !== previousSection) {
-        heading = `<h4 class="related-heading">${h(sense.section)}</h4>`;
+        heading = `<h4 class="related-heading"><span aria-hidden="true">◎</span>${h(sense.section)}</h4>`;
         previousSection = sense.section;
       }
       const labels = (sense.labels || []).map((label) =>
         `<span class="usage-label">${h(fullLabel(label.label || label.value))}</span>`
       ).join("");
-      const examples = (sense.examples || []).map((example) =>
-        `<blockquote class="example">“${h(example.quote)}”${example.source ? ` <cite>— ${h(example.source)}</cite>` : ""}</blockquote>`
-      ).join("");
+      const synonyms = (sense.synonyms || []).map((synonym) => {
+        const value = synonym.value || "";
+        const url = appUrl(`/?q=${encodeURIComponent(value)}`);
+        return `<a href="${url}" data-reference="${h(value)}">${h(value)}</a>`;
+      }).join("; ");
+      const examples = (sense.examples || []).map((example) => {
+        const frequent = example.type === "combinacao_frequente";
+        return `<p class="example ${frequent ? "example--combination" : "example--quotation"}">
+          <span class="example__mark" aria-hidden="true">${frequent ? "◌" : "▤"}</span>
+          ${frequent ? `<em>${h(example.quote)}</em>` : `«${h(example.quote)}»`}
+          ${example.source ? ` <cite>${h(example.source)}</cite>` : ""}
+        </p>`;
+      }).join("");
       const notes = (sense.notes || []).map((note) =>
         `<aside class="sense__note">${h(note.value)}</aside>`
       ).join("");
@@ -460,18 +466,23 @@
       }).join(" · ");
       const focused = sense.xml_id === focusSenseId ? " is-focused" : "";
       const depth = Math.min(Math.max(Number(sense.depth) || 1, 1), 3);
+      const number = sense.number ? `${h(sense.number)}.` : "";
+      const readability = readabilityInfo(sense.readability);
       return `${heading}
-        <section class="sense sense--depth-${depth}${focused}" id="${h(sense.xml_id || `sense-${visibleIndex}`)}">
-          <span class="sense__number">${h(sense.number || String(visibleIndex))}.</span>
+        <section class="sense sense--depth-${depth}${number ? "" : " sense--unnumbered"}${focused}" id="${h(sense.xml_id || `sense-${visibleIndex}`)}">
+          <span class="sense__number">${number}</span>
           <div>
-            ${labels ? `<div class="sense__labels">${labels}</div>` : ""}
-            <p class="sense__definition">${renderLinkedText(
+            <p class="sense__definition">
+              ${labels ? `<span class="sense__labels">${labels}</span>` : ""}
+              ${renderLinkedText(
               sense.definition_segments,
               sense.definition || "[definição em preparação]"
             )}</p>
+            ${synonyms ? `<p class="synonym-list"><span>Sinónimos</span> ${synonyms}</p>` : ""}
             ${examples ? `<div class="example-list">${examples}</div>` : ""}
             ${imageMarkup(sense.images)}
             ${notes ? `<div class="sense__notes">${notes}</div>` : ""}
+            ${readability ? `<aside class="readability-note"><strong>${h(readability.label)}</strong> — ${h(readability.description)}</aside>` : ""}
             ${sourceAttribution}
             ${references ? `<div class="reference-list">Ver também: ${references}</div>` : ""}
           </div>
@@ -491,35 +502,38 @@
     const variants = (lexical.orthographies || [])
       .map((form) => form.value)
       .filter((value) => value && value !== entry.lemma);
+    const syllabifications = (lexical.syllabifications || []).map((value) =>
+      `<span class="entry-form-detail"><span aria-hidden="true">◌</span><span class="sr-only">Translineação: </span>${h(value)}</span>`
+    ).join("");
+    const pronunciations = (lexical.pronunciations || []).map((value) =>
+      `<span class="entry-form-detail"><span aria-hidden="true">◖</span><span class="sr-only">Transcrição fonética: </span>[${h(value.replace(/^\[|\]$/g, ""))}]</span>`
+    ).join("");
     const debugJson = h(JSON.stringify(entry, null, 2));
 
     els.entry.innerHTML = `
-      <header class="entry-header ${workflowClass(entry.workflow_status || "PUBLISHED")}">
-        <div class="entry-header__meta">
-          <span class="source-badge">${h(source)}</span>
-          <span class="status-badge">${h(fullLabel(entry.source_status_label || statusLabel(entry.source_status)))}</span>
+      <header class="entry-header">
+        <h2>${h(entry.lemma || "(sem lema)")}</h2>
+        <div class="entry-form-line">
+          <div class="entry-pronunciation">${syllabifications}${pronunciations}</div>
+          <div class="entry-header__meta">
+            <span class="source-badge">${h(source)}</span>
+            <span class="status-badge">${h(fullLabel(entry.source_status_label || statusLabel(entry.source_status)))}</span>
+          </div>
         </div>
-        <div class="entry-title-row">
-          <h2>${h(entry.lemma || "(sem lema)")}</h2>
-          <span class="entry-grammar">${h(fullLabel(entry.grammatical_label || entry.grammatical_info || ""))}</span>
-        </div>
-        ${pronunciation.length ? `<div class="entry-pronunciation">${pronunciation.map((value) => `<span class="meta-chip">${h(value)}</span>`).join("")}</div>` : ""}
-        ${variants.length ? `<p class="entry-variants"><strong>Outras formas:</strong> ${h(variants.join(" · "))}</p>` : ""}
+        <p class="entry-grammar">${h(fullLabel(entry.grammatical_label || entry.grammatical_info || ""))}</p>
+        ${entry.collection_code === "VOCABULARIO" && variants.length ? `<p class="entry-variants"><strong>Outras formas:</strong> ${h(variants.join(" · "))}</p>` : ""}
       </header>
       ${glosses ? `
-        <section class="entry-section entry-gloss">
-          <h3 class="entry-section__title">Enquadramento da entrada</h3>
+        <section class="entry-section entry-gloss" aria-label="Enquadramento da entrada">
           ${glosses}
         </section>` : ""}
       ${lexical.images?.length ? `
-        <section class="entry-section">
-          <h3 class="entry-section__title">Imagens</h3>
+        <section class="entry-section entry-illustrations" aria-label="Imagens da entrada">
           ${imageMarkup(lexical.images)}
         </section>` : ""}
       ${senses ? `
-        <section class="entry-section">
+        <section class="entry-section entry-senses" aria-label="Aceções e definições">
           <div class="entry-section__heading-row">
-            <h3 class="entry-section__title">Aceções e definições <span>(${lexical.senses.length})</span></h3>
             ${lexical.lexical_links?.count ? `
               <label class="lexical-toggle">
                 <input id="lexical-links-toggle" type="checkbox" checked>
@@ -533,18 +547,15 @@
           <p>Esta entrada pertence ao Vocabulário Ortográfico e não contém aceções lexicográficas.</p>
         </section>`}
       ${entryReferences ? `
-        <section class="entry-section">
-          <h3 class="entry-section__title">Relações e remissões</h3>
+        <section class="entry-section entry-relations" aria-label="Relações e remissões">
           <div class="reference-list">Ver também: ${entryReferences}</div>
         </section>` : ""}
       ${entryNotes ? `
-        <section class="entry-section">
-          <h3 class="entry-section__title">Notas</h3>
+        <section class="entry-section entry-notes" aria-label="Notas">
           ${entryNotes}
         </section>` : ""}
       ${etymology ? `
-        <section class="entry-section">
-          <h3 class="entry-section__title">Etimologia</h3>
+        <section class="entry-section entry-etymology" aria-label="Etimologia">
           ${etymology}
         </section>` : ""}
       <details class="technical-details">
@@ -818,6 +829,20 @@
   function fullLabel(value) {
     const match = String(value || "").match(/^[^(]+\s+\((.+)\)$/);
     return match ? match[1] : value;
+  }
+
+  function readabilityInfo(value) {
+    const levels = {
+      "#level_very_easy": {
+        label: "Muito Fácil",
+        description: "Palavra presente em textos compreensíveis por praticamente todos os falantes nativos.",
+      },
+      "#level_plain": {
+        label: "Claro",
+        description: "Palavra presente em textos compreensíveis numa primeira leitura por leitores com a escolaridade obrigatória.",
+      },
+    };
+    return levels[value] || null;
   }
 
   function statusLabel(value) {

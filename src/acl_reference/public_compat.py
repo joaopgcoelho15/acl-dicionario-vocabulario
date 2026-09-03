@@ -9,6 +9,7 @@ from typing import Iterable
 from .meili import MeiliClient, MeiliError
 from .labels import domain_label, grammar_label, status_label
 from .normalization import search_key
+from .public_document import parse_public_xml
 from .services import ReleaseService
 
 COLLECTION_TO_INDEX = {
@@ -249,9 +250,28 @@ class PublicCompatibilityService:
 
     def entry_detail(self, item: dict) -> dict:
         summary = self.entry_summary(item)
+        source_xml = item.get("source_xml") or ""
+        presentation = None
+        if source_xml:
+            try:
+                presentation = parse_public_xml(source_xml)
+            except (ValueError, TypeError):
+                presentation = None
+        stored_senses = item.get("senses") or []
+        stored_by_id = {
+            sense.get("id"): sense
+            for sense in stored_senses
+            if sense.get("id")
+        }
+        presentation_senses = (
+            presentation.get("senses") if presentation else None
+        ) or stored_senses
         senses = []
-        for sense in item.get("senses") or []:
-            provenance = sense.get("provenance") or {}
+        for sense in presentation_senses:
+            stored = stored_by_id.get(sense.get("id"), {})
+            provenance = (
+                sense.get("provenance") or stored.get("provenance") or {}
+            )
             senses.append(
                 {
                     "xml_id": sense.get("id"),
@@ -261,7 +281,7 @@ class PublicCompatibilityService:
                     "definition": sense.get("definition"),
                     "definition_segments": sense.get(
                         "definition_segments"
-                    )
+                    ) or stored.get("definition_segments")
                     or [],
                     "labels": [
                         {
@@ -276,6 +296,7 @@ class PublicCompatibilityService:
                         for label in sense.get("labels") or []
                     ],
                     "examples": sense.get("examples") or [],
+                    "synonyms": sense.get("synonyms") or [],
                     "references": [
                         {
                             "type": reference.get("type"),
@@ -285,6 +306,7 @@ class PublicCompatibilityService:
                         for reference in sense.get("relations") or []
                     ],
                     "notes": sense.get("notes") or [],
+                    "readability": sense.get("readability"),
                     "images": _images(sense.get("images") or []),
                     "source": {
                         "code": provenance.get("source"),
@@ -303,9 +325,18 @@ class PublicCompatibilityService:
             "raw_sha256": item.get("source_sha256"),
             "lexical": {
                 "orthographies": item.get("forms") or [],
-                "pronunciations": [],
-                "syllabifications": [],
-                "etymologies": _split_text(item.get("etymology_text")),
+                "pronunciations": (
+                    presentation.get("pronunciations", [])
+                    if presentation else item.get("pronunciations", [])
+                ),
+                "syllabifications": (
+                    presentation.get("syllabifications", [])
+                    if presentation else item.get("syllabifications", [])
+                ),
+                "etymologies": (
+                    presentation.get("etymologies", [])
+                    if presentation else _split_text(item.get("etymology_text"))
+                ),
                 "notes": [
                     {"type": None, "value": value}
                     for value in _split_text(item.get("notes_text"))
@@ -329,9 +360,15 @@ class PublicCompatibilityService:
                         "value": reference.get("target_text"),
                         "target": reference.get("target_id"),
                     }
-                    for reference in item.get("relations") or []
+                    for reference in (
+                        presentation.get("relations", [])
+                        if presentation else item.get("relations") or []
+                    )
                 ],
-                "images": _images(item.get("images") or []),
+                "images": _images(
+                    presentation.get("images", [])
+                    if presentation else item.get("images") or []
+                ),
                 "senses": senses,
                 "lexical_links": {
                     "count": sum(
@@ -348,7 +385,7 @@ class PublicCompatibilityService:
                     )
                 },
             },
-            "_source_xml": item.get("source_xml") or "",
+            "_source_xml": source_xml,
         }
         return detail
 

@@ -252,7 +252,16 @@ class RepositoryBackupService:
             _compress(sqlite_copy, current / "editorial.sqlite.xz")
             sqlite_copy.unlink()
 
-            if self.usage_db and self.usage_db.is_file():
+            if self.usage_db and self.usage_db.is_dir():
+                usage_copies = temporary / "usage-logs"
+                usage_copies.mkdir()
+                for source in sorted(self.usage_db.glob("usage-*.sqlite")):
+                    _sqlite_backup(source, usage_copies / source.name)
+                if any(usage_copies.iterdir()):
+                    with tarfile.open(current / "usage-logs.tar.xz", "w:xz") as archive:
+                        archive.add(usage_copies, arcname="usage-logs")
+            elif self.usage_db and self.usage_db.is_file():
+                # Compatibilidade com snapshots anteriores à rotação semanal.
                 usage_copy = temporary / "usage.sqlite"
                 _sqlite_backup(self.usage_db, usage_copy)
                 _compress(usage_copy, current / "usage.sqlite.xz")
@@ -396,7 +405,29 @@ def restore_repository_snapshot(
         _safe_extract(archive, releases)
     (releases / "ACTIVE_RELEASE").write_text(release_id + "\n", encoding="utf-8")
 
-    if usage_db and (current / "usage.sqlite.xz").is_file():
+    if usage_db and (current / "usage-logs.tar.xz").is_file():
+        usage_target = Path(usage_db)
+        usage_target.parent.mkdir(parents=True, exist_ok=True)
+        if usage_target.is_dir():
+            shutil.copytree(usage_target, backup_root / usage_target.name)
+        elif usage_target.is_file():
+            shutil.copy2(usage_target, backup_root / usage_target.name)
+        temporary_usage = Path(
+            tempfile.mkdtemp(prefix=".usage-restore-", dir=usage_target.parent)
+        )
+        try:
+            with tarfile.open(current / "usage-logs.tar.xz", "r:xz") as archive:
+                _safe_extract(archive, temporary_usage)
+            restored_usage = temporary_usage / "usage-logs"
+            if usage_target.is_dir():
+                shutil.rmtree(usage_target)
+            elif usage_target.exists():
+                usage_target.unlink()
+            os.replace(restored_usage, usage_target)
+        finally:
+            shutil.rmtree(temporary_usage, ignore_errors=True)
+    elif usage_db and (current / "usage.sqlite.xz").is_file():
+        # Compatibilidade com o formato antigo de ficheiro único.
         _decompress_atomic(current / "usage.sqlite.xz", Path(usage_db))
     if env_target and (current / "runtime.env").is_file():
         shutil.copy2(current / "runtime.env", Path(env_target))

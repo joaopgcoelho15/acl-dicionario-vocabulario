@@ -25,7 +25,7 @@ docker compose run --rm --no-deps editorial \
   acl-reference --db /app/var/editorial.sqlite restore-github-backup \
   --repository /app/github-data \
   --releases-root /app/releases \
-  --usage-db /app/var/usage.sqlite
+  --usage-db /app/var/usage-logs
 
 docker compose up -d meilisearch
 active_release=$(sed -n '1p' releases/ACTIVE_RELEASE)

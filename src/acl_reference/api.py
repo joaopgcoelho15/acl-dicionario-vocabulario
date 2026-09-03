@@ -27,7 +27,7 @@ def serve(
     client = MeiliClient(meili_url, meili_key)
     release_service = ReleaseService(Path(releases_root))
     usage_log = UsageLog(
-        Path(usage_db) if usage_db else Path(releases_root).parent / "usage.sqlite"
+        Path(usage_db) if usage_db else Path(releases_root).parent / "usage-logs"
     )
     handler = type(
         "ACLReferenceHandler",

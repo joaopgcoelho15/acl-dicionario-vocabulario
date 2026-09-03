@@ -71,7 +71,10 @@ edição, revisão, aprovação ou rollback ao respetivo interveniente.
 - o servidor deve ter o repositório dos dados clonado no caminho definido por
   `GITHUB_DATA_REPOSITORY_HOST`, Git LFS e uma deploy key com escrita;
 - preservar todas as releases e o ficheiro `ACTIVE_RELEASE`;
-- preservar `var/usage.sqlite` segundo a política de retenção de IPs;
+- preservar `var/usage-logs/` segundo a política de retenção de IPs;
+  o serviço cria um SQLite por semana ISO (`usage-AAAA-Wnn.sqlite`) e, na
+  primeira execução, copia automaticamente o antigo `var/usage.sqlite` para
+  `var/usage-logs/usage-legacy.sqlite`;
 - manter a PoC na porta 5058 durante a validação inicial;
 - para rollback imediato do serviço, repor no Nginx o upstream da porta 5058;
 - para rollback de dados na nova arquitetura, usar a operação editorial de

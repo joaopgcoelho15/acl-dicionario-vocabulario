@@ -223,6 +223,11 @@ class ReferenceArchitectureTests(unittest.TestCase):
         activate_local_release(self.db, self.releases, result.release_id)
         runtime_env = self.root / "runtime.env"
         runtime_env.write_text("EDITORIAL_PASSWORD=ACL\n", encoding="utf-8")
+        usage_logs = self.root / "usage-logs"
+        usage_logs.mkdir()
+        with sqlite3.connect(usage_logs / "usage-2026-W36.sqlite") as connection:
+            connection.execute("CREATE TABLE usage_events (id INTEGER PRIMARY KEY)")
+            connection.execute("INSERT INTO usage_events DEFAULT VALUES")
         repository = self.root / "data-repository"
         repository.mkdir()
         subprocess.run(["git", "init", "-b", "main"], cwd=repository, check=True, stdout=subprocess.DEVNULL)
@@ -238,6 +243,7 @@ class ReferenceArchitectureTests(unittest.TestCase):
             db_path=self.db,
             releases_root=self.releases,
             repository_path=repository,
+            usage_db=usage_logs,
             runtime_env=runtime_env,
             require_lfs=False,
             push=False,
@@ -245,6 +251,7 @@ class ReferenceArchitectureTests(unittest.TestCase):
         synced = service.sync(actor="aprovador.demo")
         self.assertEqual(synced["state"], "succeeded")
         self.assertTrue((repository / "current" / "editorial.sqlite.xz").is_file())
+        self.assertTrue((repository / "current" / "usage-logs.tar.xz").is_file())
         manifest = json.loads((repository / "current" / "manifest.json").read_text())
         self.assertEqual(manifest["active_release"], "backup-001")
         self.assertEqual((repository / "current" / "runtime.env").read_text(), "EDITORIAL_PASSWORD=ACL\n")
@@ -252,15 +259,19 @@ class ReferenceArchitectureTests(unittest.TestCase):
         restored_db = self.root / "restored" / "editorial.sqlite"
         restored_releases = self.root / "restored-releases"
         restored_env = self.root / "restored.env"
+        restored_usage = self.root / "restored-usage-logs"
         restored = restore_repository_snapshot(
             repository,
             db_path=restored_db,
             releases_root=restored_releases,
+            usage_db=restored_usage,
             env_target=restored_env,
         )
         self.assertEqual(restored["active_release"], "backup-001")
         self.assertTrue((restored_releases / "backup-001" / "manifest.json").is_file())
         self.assertEqual(restored_env.read_text(), "EDITORIAL_PASSWORD=ACL\n")
+        with sqlite3.connect(restored_usage / "usage-2026-W36.sqlite") as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0], 1)
         with sqlite3.connect(restored_db) as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0], 2)
 
