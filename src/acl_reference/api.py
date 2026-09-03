@@ -99,6 +99,16 @@ class _Handler(BaseHTTPRequestHandler):
                 self._file("assets/stats.js", "text/javascript; charset=utf-8")
             elif parsed.path == "/assets/acl-logo.png":
                 self._file("assets/acl-logo.png", "image/png", cache=True)
+            elif parsed.path in {
+                "/assets/readability-muito-facil.png",
+                "/assets/readability-facil.png",
+                "/assets/readability-claro.png",
+            }:
+                self._file(
+                    f"assets/{parsed.path.rsplit('/', 1)[-1]}",
+                    "image/png",
+                    cache=True,
+                )
             elif parsed.path == "/health":
                 current = self.release_service.current(verify=False)
                 self._json(
