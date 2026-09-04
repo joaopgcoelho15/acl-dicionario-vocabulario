@@ -282,12 +282,12 @@
       target.innerHTML = '<p class="stats-empty">O log começa a ser preenchido com a utilização da nova versão.</p>';
       return;
     }
-    const max = Math.max(...items.map((item) => Number(item.requests) || 0), 1);
+    const max = Math.max(...items.map((item) => Number(item.count) || 0), 1);
     target.innerHTML = items.map((item) => `
-      <div class="timeline-chart__day" title="${h(item.date)}: ${h(number(item.requests))} pedidos">
-        <span class="timeline-chart__value">${h(number(item.requests))}</span>
-        <span class="timeline-chart__bar" style="height:${Math.max(4, (Number(item.requests) / max) * 150)}px"></span>
-        <span class="timeline-chart__label">${h(item.date.slice(5))}</span>
+      <div class="timeline-chart__day" title="${h(item.value)}: ${h(number(item.count))} pedidos">
+        <span class="timeline-chart__value">${h(number(item.count))}</span>
+        <span class="timeline-chart__bar" style="height:${Math.max(4, (Number(item.count) / max) * 150)}px"></span>
+        <span class="timeline-chart__label">${h(String(item.value || "").slice(5))}</span>
       </div>
     `).join("");
   }

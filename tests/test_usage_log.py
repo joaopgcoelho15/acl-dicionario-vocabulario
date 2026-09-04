@@ -62,6 +62,7 @@ def test_dashboard_combines_weekly_files_and_hides_old_healthchecks(tmp_path):
     dashboard = log.dashboard(0)
     assert dashboard["overview"]["requests"] == 1
     assert dashboard["overview"]["visitors"] == 1
+    assert dashboard["daily"] == [{"value": "2025-01-01", "count": 1}]
     assert dashboard["searches"] == [{"value": "cavalo", "count": 1}]
 
 
