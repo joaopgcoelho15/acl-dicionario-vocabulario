@@ -228,6 +228,10 @@ class ReferenceArchitectureTests(unittest.TestCase):
         with sqlite3.connect(usage_logs / "usage-2026-W36.sqlite") as connection:
             connection.execute("CREATE TABLE usage_events (id INTEGER PRIMARY KEY)")
             connection.execute("INSERT INTO usage_events DEFAULT VALUES")
+        (usage_logs / "events-2026-W36.tsv").write_text(
+            "2026-09-03T10:15:22Z\tsessao\t1\tpage_view\n",
+            encoding="utf-8",
+        )
         repository = self.root / "data-repository"
         repository.mkdir()
         subprocess.run(["git", "init", "-b", "main"], cwd=repository, check=True, stdout=subprocess.DEVNULL)
@@ -273,6 +277,10 @@ class ReferenceArchitectureTests(unittest.TestCase):
         self.assertEqual(restored_env.read_text(), "EDITORIAL_PASSWORD=ACL\n")
         with sqlite3.connect(restored_usage / "usage-2026-W36.sqlite") as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0], 1)
+        self.assertEqual(
+            (restored_usage / "events-2026-W36.tsv").read_text(encoding="utf-8"),
+            "2026-09-03T10:15:22Z\tsessao\t1\tpage_view\n",
+        )
         with sqlite3.connect(restored_db) as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0], 2)
 

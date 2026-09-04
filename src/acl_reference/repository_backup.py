@@ -232,8 +232,9 @@ class RepositoryBackupService:
             return False
         if self.usage_db.is_file():
             return True
-        return self.usage_db.is_dir() and any(
-            self.usage_db.glob("usage-*.sqlite")
+        return self.usage_db.is_dir() and (
+            any(self.usage_db.glob("usage-*.sqlite"))
+            or any(self.usage_db.glob("events-*.tsv"))
         )
 
     def _validate_repository(self) -> Path:
@@ -269,6 +270,8 @@ class RepositoryBackupService:
                 usage_copies.mkdir()
                 for source in sorted(self.usage_db.glob("usage-*.sqlite")):
                     _sqlite_backup(source, usage_copies / source.name)
+                for source in sorted(self.usage_db.glob("events-*.tsv")):
+                    shutil.copy2(source, usage_copies / source.name)
                 if any(usage_copies.iterdir()):
                     with tarfile.open(current / "usage-logs.tar.xz", "w:xz") as archive:
                         archive.add(usage_copies, arcname="usage-logs")

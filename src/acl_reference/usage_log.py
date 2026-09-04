@@ -25,9 +25,15 @@ class UsageLog:
         if configured_path.suffix not in {".sqlite", ".db"}:
             self._copy_legacy_database(configured_path.parent / "usage.sqlite")
         self.events: queue.Queue[dict] = queue.Queue(maxsize=10000)
+        self.interaction_events: queue.Queue[dict] = queue.Queue(maxsize=10000)
         self._initialize(self._weekly_path())
         threading.Thread(
             target=self._writer, name="acl-usage-log", daemon=True
+        ).start()
+        threading.Thread(
+            target=self._interaction_writer,
+            name="acl-interaction-log",
+            daemon=True,
         ).start()
 
     def record(
@@ -65,6 +71,44 @@ class UsageLog:
             self.events.put_nowait(event)
         except queue.Full:
             pass
+
+    def record_interaction(
+        self,
+        *,
+        client_ip: str,
+        user_agent: str | None,
+        payload: dict,
+    ) -> bool:
+        """Regista uma ação da UI e a resposta que a causou num TSV semanal."""
+        event_name = str(payload.get("event") or "").strip()
+        if event_name not in INTERACTION_EVENT_TYPES:
+            return False
+        row = {
+            "ts": payload.get("ts") or _timestamp(),
+            "session": payload.get("session"),
+            "seq": payload.get("seq"),
+            "event": event_name,
+            "ip": client_ip,
+            "ua": user_agent,
+            "resource": payload.get("resource"),
+            "status": payload.get("status"),
+            "ms": payload.get("ms"),
+            "query": payload.get("query"),
+            "results": payload.get("results"),
+            "shown": payload.get("shown"),
+            "filter": payload.get("filter"),
+            "filters": payload.get("filters"),
+            "entry": payload.get("entry"),
+            "source": payload.get("source"),
+            "pos": payload.get("pos"),
+            "target": payload.get("target"),
+            "found": payload.get("found"),
+        }
+        try:
+            self.interaction_events.put_nowait(row)
+        except queue.Full:
+            return False
+        return True
 
     def dashboard(self, days: int) -> dict:
         cutoff = (
@@ -185,9 +229,33 @@ class UsageLog:
             )
             connection.commit()
 
+    def _interaction_writer(self) -> None:
+        while True:
+            first = self.interaction_events.get()
+            batch = [first]
+            while len(batch) < 250:
+                try:
+                    batch.append(self.interaction_events.get_nowait())
+                except queue.Empty:
+                    break
+            path = self._weekly_interaction_path()
+            with path.open("a", encoding="utf-8", newline="") as stream:
+                for event in batch:
+                    stream.write(
+                        "\t".join(
+                            _tsv_value(event.get(field), field=field)
+                            for field in INTERACTION_FIELDS
+                        )
+                        + "\n"
+                    )
+
     def _weekly_path(self) -> Path:
         year, week, _ = datetime.now(timezone.utc).isocalendar()
         return self.directory / f"usage-{year}-W{week:02d}.sqlite"
+
+    def _weekly_interaction_path(self) -> Path:
+        year, week, _ = datetime.now(timezone.utc).isocalendar()
+        return self.directory / f"events-{year}-W{week:02d}.tsv"
 
     def _database_paths(self) -> list[Path]:
         paths = sorted(self.directory.glob("usage-*.sqlite"))
@@ -233,6 +301,45 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_search ON usage_events(search_query);
 """
+
+
+INTERACTION_FIELDS = (
+    "ts", "session", "seq", "event", "ip", "ua", "resource", "status",
+    "ms", "query", "results", "shown", "filter", "filters", "entry",
+    "source", "pos", "target", "found",
+)
+
+INTERACTION_EVENT_TYPES = frozenset({
+    "page_view",
+    "search",
+    "filter_change",
+    "collection_switch",
+    "alphabet_browse",
+    "load_more",
+    "entry_view",
+    "reference_click",
+    "technical_details_view",
+    "lexical_links_toggle",
+    "clear_filters",
+    "stats_page_view",
+})
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _tsv_value(value: object, *, field: str) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        text = "1" if value else "0"
+    elif isinstance(value, (list, tuple)):
+        text = ",".join(str(item) for item in value)
+    else:
+        text = str(value)
+    text = " ".join(text.replace("\t", " ").splitlines()).strip()
+    return text[:32768 if field == "shown" else 8192]
 
 
 def _usage_filter(cutoff: str | None) -> tuple[str, list[object]]:

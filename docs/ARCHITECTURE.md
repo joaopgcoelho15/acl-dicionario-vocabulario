@@ -14,7 +14,7 @@ flowchart LR
     SMOKE --> SWAP["Troca atómica dos dois índices"]
     SWAP --> MEILI[("Meilisearch público")]
     MEILI --> PUBLIC["Aplicação pública / API v1"]
-    PUBLIC -. "fila assíncrona" .-> LOG[("SQLite de utilização")]
+    PUBLIC -. "fila assíncrona" .-> LOG[("SQLite HTTP + TSV de eventos")]
 ```
 
 ## Fronteiras
@@ -33,7 +33,9 @@ flowchart LR
 - A interface pública conserva o visual validado na PoC anterior, mas as
   pesquisas, facetas, catálogo e detalhes são fornecidos pela nova API.
 - O log de utilização é separado da base editorial e escrito em segundo
-  plano, para não acrescentar latência ao pedido público.
+  plano, para não acrescentar latência ao pedido público. O SQLite semanal
+  conserva os pedidos HTTP; o TSV semanal conserva a sequência causal de
+  ações e respostas da UI através de `session` e `seq`.
 
 ## Estado desta iteração
 

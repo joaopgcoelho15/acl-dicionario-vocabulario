@@ -105,6 +105,30 @@ ficheiro `.env` real existe no servidor e a sua cópia restaurável fica apenas 
 `current/runtime.env` no repositório privado dos dados. O software contém
 somente `.env.example`, com nomes de variáveis e valores fictícios.
 
+## Registo de utilização pública
+
+A aplicação mantém dois registos complementares em `var/usage-logs/`:
+
+- `usage-AAAA-Wnn.sqlite`: pedidos HTTP para diagnóstico operacional;
+- `events-AAAA-Wnn.tsv`: ações da interface e respetivas respostas, com uma
+  linha por evento e 19 campos separados por TAB.
+
+Cada separador do browser recebe um UUID guardado em `sessionStorage`. Todos
+os pedidos da interface enviam esse identificador e os eventos recebem uma
+sequência crescente, preservada mesmo quando a página é recarregada. Assim é
+possível relacionar uma pesquisa com os resultados apresentados, a entrada
+aberta em seguida, mudanças de filtros, remissões e outras ações da mesma
+visita. O TSV guarda, por esta ordem:
+
+```text
+ts session seq event ip ua resource status ms query results shown filter filters entry source pos target found
+```
+
+O endpoint recetor completa o IP e o user-agent observados pelo servidor. Os
+ficheiros rodam semanalmente, são escritos em segundo plano e entram no backup
+diário do repositório privado de dados. `/health` permanece excluído do log de
+pedidos HTTP.
+
 ## Requisitos
 
 - Python 3.11 ou superior

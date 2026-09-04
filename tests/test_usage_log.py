@@ -16,6 +16,14 @@ def _wait_for_rows(database, expected: int) -> None:
     raise AssertionError(f"Esperavam-se {expected} registos; existem {count}.")
 
 
+def _wait_for_text(path) -> str:
+    for _ in range(100):
+        if path.is_file() and (text := path.read_text(encoding="utf-8")):
+            return text
+        time.sleep(0.01)
+    raise AssertionError(f"O ficheiro {path} não recebeu eventos.")
+
+
 def test_healthcheck_is_not_recorded_and_weekly_database_is_used(tmp_path):
     log = UsageLog(tmp_path / "usage-logs")
     log.record(
@@ -55,3 +63,52 @@ def test_dashboard_combines_weekly_files_and_hides_old_healthchecks(tmp_path):
     assert dashboard["overview"]["requests"] == 1
     assert dashboard["overview"]["visitors"] == 1
     assert dashboard["searches"] == [{"value": "cavalo", "count": 1}]
+
+
+def test_interaction_event_is_written_as_compact_weekly_tsv(tmp_path):
+    log = UsageLog(tmp_path / "usage-logs")
+    accepted = log.record_interaction(
+        client_ip="192.0.2.30",
+        user_agent="Mozilla/5.0\tTeste",
+        payload={
+            "ts": "2026-09-03T10:15:22Z",
+            "session": "a1b2c3",
+            "seq": 1,
+            "event": "search",
+            "resource": "DLP",
+            "status": 200,
+            "ms": 18.25,
+            "query": "cavalo",
+            "results": 3,
+            "shown": ["DLP-cavalo_1", "DLP-cavalo_2", "DLP-cavalo_3"],
+            "filters": "domínio=Zoologia",
+        },
+    )
+    assert accepted
+    event_file = log._weekly_interaction_path()
+    fields = _wait_for_text(event_file).rstrip("\n").split("\t")
+    assert len(fields) == 19
+    assert fields[:12] == [
+        "2026-09-03T10:15:22Z",
+        "a1b2c3",
+        "1",
+        "search",
+        "192.0.2.30",
+        "Mozilla/5.0 Teste",
+        "DLP",
+        "200",
+        "18.25",
+        "cavalo",
+        "3",
+        "DLP-cavalo_1,DLP-cavalo_2,DLP-cavalo_3",
+    ]
+    assert fields[13] == "domínio=Zoologia"
+
+
+def test_unknown_interaction_event_is_rejected(tmp_path):
+    log = UsageLog(tmp_path / "usage-logs")
+    assert not log.record_interaction(
+        client_ip="192.0.2.30",
+        user_agent="browser",
+        payload={"event": "invented"},
+    )

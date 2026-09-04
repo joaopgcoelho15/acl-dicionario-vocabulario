@@ -4,6 +4,7 @@
   const basePath = (
     document.querySelector('meta[name="acl-base-path"]')?.content || ""
   ).replace(/\/+$/, "");
+  const usage = window.ACLUsage;
   const view = document.body.dataset.dashboardView || "usage";
   const period = document.querySelector("#usage-period");
   const refresh = document.querySelector("#refresh-stats");
@@ -18,18 +19,43 @@
   load();
 
   async function load() {
+    const usageSeq = usage.nextSequence();
+    const usageTs = new Date().toISOString();
+    const started = window.performance.now();
+    let responseStatus = 0;
     loading.hidden = false;
     error.hidden = true;
     refresh.disabled = true;
     try {
       const response = await fetch(
         appUrl(`/api/dashboard?days=${encodeURIComponent(period?.value || "30")}`),
-        { headers: { Accept: "application/json" } }
+        { headers: { Accept: "application/json", ...usage.headers(usageSeq) } }
       );
+      responseStatus = response.status;
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       render(data);
+      void usage.send(
+        appUrl("/api/usage-events"),
+        view === "usage" ? "stats_page_view" : "page_view",
+        {
+          ts: usageTs,
+          status: response.status,
+          ms: usage.roundDuration(window.performance.now() - started),
+        },
+        usageSeq
+      );
     } catch {
+      void usage.send(
+        appUrl("/api/usage-events"),
+        view === "usage" ? "stats_page_view" : "page_view",
+        {
+          ts: usageTs,
+          status: responseStatus,
+          ms: usage.roundDuration(window.performance.now() - started),
+        },
+        usageSeq
+      );
       error.textContent = "Não foi possível calcular as estatísticas.";
       error.hidden = false;
     } finally {

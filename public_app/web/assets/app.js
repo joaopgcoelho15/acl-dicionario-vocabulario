@@ -56,6 +56,8 @@
     currentFacets: null,
   };
 
+  const usage = window.ACLUsage;
+
   let inputTimer = null;
 
   renderAlphabet();
@@ -78,6 +80,7 @@
     state.browseStart = params.get("letter") || "";
     updateCollectionTabs();
     updateActiveFilterCount();
+    void sendUsageEvent("page_view", { resource: usageResource() });
 
     if (routeId) {
       await loadPersistentId(routeId);
@@ -121,8 +124,11 @@
         state.offset = 0;
         updateCollectionTabs();
         updateSearchUrl();
-        if (state.browsing) browseCatalogue({ reset: true });
-        else runSearch({ selectFirst: true });
+        if (state.browsing) {
+          browseCatalogue({ reset: true, usageEvent: "collection_switch" });
+        } else {
+          runSearch({ selectFirst: true, usageEvent: "collection_switch" });
+        }
       });
     });
 
@@ -133,19 +139,38 @@
         state.offset = 0;
         updateCollectionTabs();
         updateSearchUrl();
-        runSearch({ selectFirst: true });
+        if (state.browsing) {
+          browseCatalogue({ reset: true, usageEvent: "collection_switch" });
+        } else {
+          runSearch({ selectFirst: true, usageEvent: "collection_switch" });
+        }
       });
     });
 
-    [els.grammar, els.domain, els.status].forEach((select) => {
+    [
+      [els.grammar, "classe"],
+      [els.domain, "domínio"],
+      [els.status, "estado"],
+    ].forEach(([select, filterName]) => {
       select.addEventListener("change", () => {
         state.grammar = els.grammar.value;
         state.domain = els.domain.value;
         state.status = els.status.value;
         state.offset = 0;
         updateActiveFilterCount();
-        if (state.query) runSearch({ selectFirst: true });
-        else browseCatalogue({ reset: true });
+        if (state.query) {
+          runSearch({
+            selectFirst: true,
+            usageEvent: "filter_change",
+            changedFilter: filterName,
+          });
+        } else {
+          browseCatalogue({
+            reset: true,
+            usageEvent: "filter_change",
+            changedFilter: filterName,
+          });
+        }
       });
     });
 
@@ -158,8 +183,11 @@
       els.status.value = "";
       state.offset = 0;
       updateActiveFilterCount();
-      if (state.query) runSearch({ selectFirst: true });
-      else browseCatalogue({ reset: true });
+      if (state.query) {
+        runSearch({ selectFirst: true, usageEvent: "clear_filters" });
+      } else {
+        browseCatalogue({ reset: true, usageEvent: "clear_filters" });
+      }
     });
 
     els.clearAll.addEventListener("click", () => {
@@ -178,7 +206,7 @@
       updateCollectionTabs();
       updateActiveFilterCount();
       updateSearchUrl();
-      renderInitialState();
+      renderInitialState({ usageEvent: "clear_filters" });
       els.input.focus();
     });
 
@@ -189,10 +217,14 @@
 
     els.loadMore.addEventListener("click", () => {
       if (state.browsing) {
-        browseCatalogue();
+        browseCatalogue({ usageEvent: "load_more" });
       } else {
         state.offset += state.limit;
-        runSearch({ append: true, selectFirst: false });
+        runSearch({
+          append: true,
+          selectFirst: false,
+          usageEvent: "load_more",
+        });
       }
     });
 
@@ -208,7 +240,9 @@
       const nearHorizontalEnd =
         hasHorizontalOverflow &&
         els.results.scrollWidth - els.results.clientWidth - els.results.scrollLeft < 220;
-      if (nearVerticalEnd || nearHorizontalEnd) browseCatalogue();
+      if (nearVerticalEnd || nearHorizontalEnd) {
+        browseCatalogue({ usageEvent: "load_more" });
+      }
     });
 
     els.alphabet.addEventListener("click", (event) => {
@@ -219,7 +253,7 @@
       state.browseStart = button.dataset.letter || "";
       state.offset = 0;
       updateSearchUrl();
-      browseCatalogue({ reset: true });
+      browseCatalogue({ reset: true, usageEvent: "alphabet_browse" });
     });
 
     els.alphabetAll.addEventListener("click", () => {
@@ -228,7 +262,7 @@
       state.browseStart = "";
       state.offset = 0;
       updateSearchUrl();
-      browseCatalogue({ reset: true });
+      browseCatalogue({ reset: true, usageEvent: "alphabet_browse" });
     });
 
     document.addEventListener("keydown", (event) => {
@@ -274,7 +308,13 @@
     }
   }
 
-  async function runSearch({ append = false, selectFirst = false } = {}) {
+  async function runSearch({
+    append = false,
+    selectFirst = false,
+    usageEvent = "search",
+    changedFilter = null,
+    entrySource = "search_results",
+  } = {}) {
     if (!state.query) {
       renderInitialState();
       return;
@@ -302,23 +342,62 @@
     if (state.grammar) params.set("grammar", state.grammar);
     if (state.domain) params.set("domain", state.domain);
     if (state.status) params.set("status", state.status);
+    const usageSnapshot = {
+      ts: new Date().toISOString(),
+      resource: usageResource(),
+      query: state.query,
+      filters: activeFilters(),
+    };
+    const usageSeq = usageEvent ? nextUsageSequence() : null;
 
     try {
-      const data = await getJson(appUrl(`/api/entries?${params}`), {
+      const response = await getJson(appUrl(`/api/entries?${params}`), {
         signal: state.searchController.signal,
+        measure: true,
+        usageSeq,
       });
+      const data = response.data;
       state.total = data.total;
       renderSearchSummary(data);
       updateFacets(data.facets);
       renderResults(data.items, { append });
       els.loadMore.hidden = state.offset + data.items.length >= data.total;
+      if (usageEvent) {
+        void sendUsageEvent(usageEvent, {
+          ts: usageSnapshot.ts,
+          resource: usageSnapshot.resource,
+          status: response.status,
+          ms: response.ms,
+          query: usageEvent === "search" ? usageSnapshot.query : null,
+          results: data.total,
+          shown: visibleEntryIds(),
+          filter: changedFilter,
+          filters: usageSnapshot.filters,
+        }, usageSeq);
+      }
 
       if (selectFirst && data.items.length) {
-        await loadEntry(data.items[0].xml_id, { navigate: false });
+        await loadEntry(data.items[0].xml_id, {
+          navigate: false,
+          source: entrySource,
+          position: 1,
+        });
       } else if (!data.items.length && !append) {
         renderEmptyEntry("Sem resultados", "Experimente outra palavra ou remova alguns filtros.");
       }
     } catch (error) {
+      if (usageEvent) {
+        void sendUsageEvent(usageEvent, {
+          ts: usageSnapshot.ts,
+          resource: usageSnapshot.resource,
+          status: error.status || 0,
+          ms: error.ms,
+          query: usageEvent === "search" ? usageSnapshot.query : null,
+          results: error.name === "AbortError" ? null : 0,
+          filter: changedFilter,
+          filters: usageSnapshot.filters,
+        }, usageSeq);
+      }
       if (error.name === "AbortError") return;
       els.results.innerHTML = `<div class="error-state"><p>Não foi possível pesquisar.</p></div>`;
       renderEmptyEntry("Pesquisa indisponível", "Confirme que a base de dados está carregada e volte a tentar.");
@@ -354,22 +433,51 @@
 
     els.results.querySelectorAll("[data-entry-id]").forEach((button) => {
       button.addEventListener("click", () => {
-        loadEntry(button.dataset.entryId, { navigate: true });
+        const buttons = [...els.results.querySelectorAll("[data-entry-id]")];
+        loadEntry(button.dataset.entryId, {
+          navigate: true,
+          source: state.browsing
+            ? (state.browseStart ? "alphabet" : "catalogue")
+            : "search_results",
+          position: buttons.indexOf(button) + 1,
+        });
       });
     });
   }
 
-  async function loadEntry(xmlId, { navigate = true, focusSenseId = null } = {}) {
+  async function loadEntry(
+    xmlId,
+    {
+      navigate = true,
+      focusSenseId = null,
+      source = "search_results",
+      position = null,
+    } = {}
+  ) {
     if (!xmlId) return;
+    const usageSeq = nextUsageSequence();
+    const usageTs = new Date().toISOString();
     state.selectedId = xmlId;
     state.focusSenseId = focusSenseId;
     markSelectedResult();
     els.entry.innerHTML = `<div class="entry-empty"><div class="loading-card"></div></div>`;
     try {
-      const entry = await getJson(
-        appUrl(`/api/entries/${encodeURIComponent(xmlId)}`)
+      const response = await getJson(
+        appUrl(`/api/entries/${encodeURIComponent(xmlId)}`),
+        { measure: true, usageSeq }
       );
+      const entry = response.data;
       renderEntry(entry, focusSenseId);
+      void sendUsageEvent("entry_view", {
+        ts: usageTs,
+        resource: entry.collection_code || usageResource(),
+        status: response.status,
+        ms: response.ms,
+        entry: entry.xml_id || xmlId,
+        source,
+        pos: position,
+        found: 1,
+      }, usageSeq);
       if (navigate) {
         const target = focusSenseId || xmlId;
         window.history.pushState(
@@ -378,27 +486,59 @@
           appUrl(`/id/${encodeURIComponent(target)}`)
         );
       }
-    } catch {
+    } catch (error) {
+      void sendUsageEvent("entry_view", {
+        ts: usageTs,
+        resource: usageResource(),
+        status: error.status || 0,
+        ms: error.ms,
+        entry: xmlId,
+        source,
+        pos: position,
+        found: 0,
+      }, usageSeq);
       renderEmptyEntry("Entrada indisponível", "O identificador não foi encontrado ou é ambíguo.");
     }
   }
 
   async function loadPersistentId(xmlId) {
+    const usageSeq = nextUsageSequence();
+    const usageTs = new Date().toISOString();
     els.entry.innerHTML = `<div class="entry-empty"><div class="loading-card"></div></div>`;
     try {
-      const resolution = await getJson(
-        appUrl(`/api/resolve/${encodeURIComponent(xmlId)}`)
+      const response = await getJson(
+        appUrl(`/api/resolve/${encodeURIComponent(xmlId)}`),
+        { measure: true, usageSeq }
       );
+      const resolution = response.data;
       const entry = resolution.matches[0];
       state.selectedId = entry.xml_id;
       state.focusSenseId = resolution.kind === "sense" ? xmlId : null;
       state.query = entry.lemma || "";
       els.input.value = state.query;
       renderEntry(entry, state.focusSenseId);
+      void sendUsageEvent("entry_view", {
+        ts: usageTs,
+        resource: entry.collection_code || usageResource(),
+        status: response.status,
+        ms: response.ms,
+        entry: entry.xml_id || xmlId,
+        source: "direct_url",
+        found: 1,
+      }, usageSeq);
       state.offset = 0;
-      await runSearch({ selectFirst: false });
+      await runSearch({ selectFirst: false, usageEvent: null });
       markSelectedResult();
-    } catch {
+    } catch (error) {
+      void sendUsageEvent("entry_view", {
+        ts: usageTs,
+        resource: usageResource(),
+        status: error.status || 0,
+        ms: error.ms,
+        entry: xmlId,
+        source: "direct_url",
+        found: 0,
+      }, usageSeq);
       renderEmptyEntry("Identificador não encontrado", `Não foi possível resolver “${xmlId}”.`);
     }
   }
@@ -594,11 +734,16 @@
     els.entry.querySelectorAll("[data-reference]").forEach((link) => {
       link.addEventListener("click", (event) => {
         event.preventDefault();
+        void sendUsageEvent("reference_click", {
+          resource: entry.collection_code || usageResource(),
+          entry: entry.xml_id,
+          target: link.dataset.reference,
+        });
         state.query = link.dataset.reference;
         els.input.value = state.query;
         state.offset = 0;
         updateSearchUrl();
-        runSearch({ selectFirst: true });
+        runSearch({ selectFirst: true, entrySource: "reference" });
         window.scrollTo({ top: document.querySelector(".search-workspace").offsetTop - 90, behavior: "smooth" });
       });
     });
@@ -606,6 +751,11 @@
     const linksToggle = els.entry.querySelector("#lexical-links-toggle");
     linksToggle?.addEventListener("change", () => {
       els.entry.classList.toggle("lexical-links-off", !linksToggle.checked);
+      void sendUsageEvent("lexical_links_toggle", {
+        resource: entry.collection_code || usageResource(),
+        entry: entry.xml_id,
+        target: linksToggle.checked ? "on" : "off",
+      });
     });
 
     els.entry.querySelectorAll(".sense__number--readability").forEach((button) => {
@@ -624,12 +774,29 @@
       if (!technicalDetails.open || rawXmlLoaded) return;
       rawXmlLoaded = true;
       const xmlCode = technicalDetails.querySelector("[data-debug-xml]");
+      const usageSeq = nextUsageSequence();
+      const usageTs = new Date().toISOString();
       void getJson(
-        appUrl(`/api/entries/${encodeURIComponent(entry.xml_id)}/source`)
-      ).then((debugEntry) => {
-        xmlCode.textContent = debugEntry.raw_xml || "XML não disponível.";
-      }).catch(() => {
+        appUrl(`/api/entries/${encodeURIComponent(entry.xml_id)}/source`),
+        { measure: true, usageSeq }
+      ).then((response) => {
+        xmlCode.textContent = response.data.raw_xml || "XML não disponível.";
+        void sendUsageEvent("technical_details_view", {
+          ts: usageTs,
+          resource: entry.collection_code || usageResource(),
+          status: response.status,
+          ms: response.ms,
+          entry: entry.xml_id,
+        }, usageSeq);
+      }).catch((error) => {
         xmlCode.textContent = "Não foi possível carregar o XML original.";
+        void sendUsageEvent("technical_details_view", {
+          ts: usageTs,
+          resource: entry.collection_code || usageResource(),
+          status: error.status || 0,
+          ms: error.ms,
+          entry: entry.xml_id,
+        }, usageSeq);
       });
     });
 
@@ -718,7 +885,7 @@
     els.entry.innerHTML = `<div class="error-state"><h2>${h(title)}</h2><p>${h(message)}</p></div>`;
   }
 
-  function renderInitialState() {
+  function renderInitialState({ usageEvent = null } = {}) {
     if (state.searchController) state.searchController.abort();
     state.offset = 0;
     state.total = 0;
@@ -732,10 +899,14 @@
     els.alphabetGuide.hidden = false;
     updateAlphabet();
     if (state.globalFacets) updateFacets(state.globalFacets);
-    void browseCatalogue({ reset: true });
+    void browseCatalogue({ reset: true, usageEvent });
   }
 
-  async function browseCatalogue({ reset = false } = {}) {
+  async function browseCatalogue({
+    reset = false,
+    usageEvent = null,
+    changedFilter = null,
+  } = {}) {
     if (state.browseLoading) return;
     state.browseLoading = true;
     if (reset) {
@@ -759,8 +930,18 @@
     if (state.status) params.set("status", state.status);
     if (state.browseCursor) params.set("cursor", state.browseCursor);
     if (state.browseStart) params.set("letter", state.browseStart);
+    const usageSnapshot = {
+      ts: new Date().toISOString(),
+      resource: usageResource(),
+      filters: activeFilters(),
+    };
+    const usageSeq = usageEvent ? nextUsageSequence() : null;
     try {
-      const data = await getJson(appUrl(`/api/catalogue?${params}`));
+      const response = await getJson(appUrl(`/api/catalogue?${params}`), {
+        measure: Boolean(usageEvent),
+        usageSeq,
+      });
+      const data = usageEvent ? response.data : response;
       renderResults(data.items, { append: !reset });
       state.browseLoaded += data.items.length;
       if (data.total !== null && data.total !== undefined) {
@@ -771,9 +952,38 @@
       updateFacets(data.facets || {});
       els.loadMore.hidden = true;
       renderBrowseSummary();
-      if (reset && data.items.length) await loadEntry(data.items[0].xml_id,{navigate:false});
+      if (usageEvent) {
+        void sendUsageEvent(usageEvent, {
+          ts: usageSnapshot.ts,
+          resource: usageSnapshot.resource,
+          status: response.status,
+          ms: response.ms,
+          results: data.total,
+          shown: visibleEntryIds(),
+          filter: changedFilter,
+          filters: usageSnapshot.filters,
+        }, usageSeq);
+      }
+      if (reset && data.items.length) {
+        await loadEntry(data.items[0].xml_id, {
+          navigate: false,
+          source: state.browseStart ? "alphabet" : "catalogue",
+          position: 1,
+        });
+      }
       else if (reset) renderEmptyEntry("Sem resultados", "Remova alguns filtros ou escolha outra letra.");
-    } catch {
+    } catch (error) {
+      if (usageEvent) {
+        void sendUsageEvent(usageEvent, {
+          ts: usageSnapshot.ts,
+          resource: usageSnapshot.resource,
+          status: error.status || 0,
+          ms: error.ms,
+          results: 0,
+          filter: changedFilter,
+          filters: usageSnapshot.filters,
+        }, usageSeq);
+      }
       if (reset) {
         els.results.innerHTML = `<div class="error-state"><p>Não foi possível carregar o catálogo.</p></div>`;
       }
@@ -798,16 +1008,76 @@
   }
 
   async function getJson(url, options = {}) {
-    const response = await window.fetch(url, {
-      headers: { Accept: "application/json" },
-      ...options,
-    });
+    const {
+      measure = false,
+      usageSeq = null,
+      headers = {},
+      ...fetchOptions
+    } = options;
+    const started = window.performance.now();
+    let response;
+    try {
+      response = await window.fetch(url, {
+        headers: {
+          Accept: "application/json",
+          ...usageHeaders(usageSeq),
+          ...headers,
+        },
+        ...fetchOptions,
+      });
+    } catch (error) {
+      error.ms = roundDuration(window.performance.now() - started);
+      throw error;
+    }
     if (!response.ok) {
       const error = new Error(`HTTP ${response.status}`);
       error.status = response.status;
+      error.ms = roundDuration(window.performance.now() - started);
       throw error;
     }
-    return response.json();
+    const data = await response.json();
+    if (!measure) return data;
+    return {
+      data,
+      status: response.status,
+      ms: roundDuration(window.performance.now() - started),
+    };
+  }
+
+  function nextUsageSequence() {
+    return usage.nextSequence();
+  }
+
+  function usageHeaders(sequence = null) {
+    return usage.headers(sequence);
+  }
+
+  function sendUsageEvent(event, fields = {}, sequence = null) {
+    return usage.send(appUrl("/api/usage-events"), event, fields, sequence);
+  }
+
+  function usageResource() {
+    return state.collection || "AMBOS";
+  }
+
+  function activeFilters() {
+    return [
+      ["classe", state.grammar],
+      ["domínio", state.domain],
+      ["estado", state.status],
+    ].filter(([, value]) => value)
+      .map(([name, value]) => `${name}=${value}`)
+      .join(";");
+  }
+
+  function visibleEntryIds() {
+    return [...els.results.querySelectorAll("[data-entry-id]")]
+      .map((element) => element.dataset.entryId)
+      .filter(Boolean);
+  }
+
+  function roundDuration(value) {
+    return usage.roundDuration(value);
   }
 
   function appUrl(path = "/") {

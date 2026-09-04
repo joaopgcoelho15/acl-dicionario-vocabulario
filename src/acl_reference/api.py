@@ -69,7 +69,7 @@ class _Handler(BaseHTTPRequestHandler):
         super().handle_one_request()
         if getattr(self, "command", None):
             self.usage_log.record(
-                client_ip=self.client_address[0],
+                client_ip=self._client_ip(),
                 method=self.command,
                 raw_path=self.path,
                 status_code=self._response_status or 0,
@@ -81,6 +81,45 @@ class _Handler(BaseHTTPRequestHandler):
     def send_response(self, code, message=None):
         self._response_status = int(code)
         return super().send_response(code, message)
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/usage-events":
+            self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            content_length = 0
+        if content_length <= 0 or content_length > 65536:
+            self._json(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                {"error": "invalid_event_size"},
+            )
+            return
+        try:
+            payload = json.loads(self.rfile.read(content_length))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        if not isinstance(payload, dict):
+            self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_event"})
+            return
+        payload["session"] = self.headers.get("X-ACL-Session") or payload.get(
+            "session"
+        )
+        payload["seq"] = self.headers.get("X-ACL-Seq") or payload.get("seq")
+        if not self.usage_log.record_interaction(
+            client_ip=self._client_ip(),
+            user_agent=self.headers.get("User-Agent"),
+            payload=payload,
+        ):
+            self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_event_type"})
+            return
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -97,6 +136,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._file("assets/styles.css", "text/css; charset=utf-8")
             elif parsed.path == "/assets/stats.js":
                 self._file("assets/stats.js", "text/javascript; charset=utf-8")
+            elif parsed.path == "/assets/usage-client.js":
+                self._file(
+                    "assets/usage-client.js", "text/javascript; charset=utf-8"
+                )
             elif parsed.path == "/assets/acl-logo.png":
                 self._file("assets/acl-logo.png", "image/png", cache=True)
             elif parsed.path in {
@@ -398,6 +441,12 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _client_ip(self) -> str:
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",", 1)[0].strip()
+        return self.headers.get("X-Real-IP") or self.client_address[0]
 
     def log_message(self, format: str, *args: object) -> None:
         return
