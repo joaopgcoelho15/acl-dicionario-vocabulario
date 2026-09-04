@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sqlite3
 import subprocess
+import tarfile
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -228,6 +229,9 @@ class ReferenceArchitectureTests(unittest.TestCase):
         with sqlite3.connect(usage_logs / "usage-2026-W36.sqlite") as connection:
             connection.execute("CREATE TABLE usage_events (id INTEGER PRIMARY KEY)")
             connection.execute("INSERT INTO usage_events DEFAULT VALUES")
+        with sqlite3.connect(usage_logs / "usage-legacy.sqlite") as connection:
+            connection.execute("CREATE TABLE usage_events (id INTEGER PRIMARY KEY)")
+            connection.execute("INSERT INTO usage_events DEFAULT VALUES")
         (usage_logs / "events-2026-W36.tsv").write_text(
             "2026-09-03T10:15:22Z\tsessao\t1\tpage_view\n",
             encoding="utf-8",
@@ -256,9 +260,24 @@ class ReferenceArchitectureTests(unittest.TestCase):
         self.assertEqual(synced["state"], "succeeded")
         self.assertRegex(synced["usage_backup_date"], r"^\d{4}-\d{2}-\d{2}$")
         self.assertTrue((repository / "current" / "editorial.sqlite.xz").is_file())
-        self.assertTrue((repository / "current" / "usage-logs.tar.xz").is_file())
+        usage_snapshot = repository / "current" / "usage-logs"
+        weekly_archive = usage_snapshot / "2026-W36.tar.xz"
+        self.assertTrue(weekly_archive.is_file())
+        self.assertTrue((usage_snapshot / "legacy.sqlite.xz").is_file())
+        self.assertFalse((repository / "current" / "usage-logs.tar.xz").exists())
+        with tarfile.open(weekly_archive, "r:xz") as archive:
+            self.assertEqual(
+                sorted(item.name for item in archive.getmembers() if item.isfile()),
+                [
+                    "2026-W36/events-2026-W36.tsv",
+                    "2026-W36/usage-2026-W36.sqlite",
+                ],
+            )
+        weekly_archive_bytes = weekly_archive.read_bytes()
         manifest = json.loads((repository / "current" / "manifest.json").read_text())
         self.assertEqual(manifest["active_release"], "backup-001")
+        self.assertEqual(manifest["format_version"], 2)
+        self.assertIn("usage-logs/2026-W36.tar.xz", manifest["files"])
         self.assertEqual((repository / "current" / "runtime.env").read_text(), "EDITORIAL_PASSWORD=ACL\n")
 
         restored_db = self.root / "restored" / "editorial.sqlite"
@@ -277,6 +296,8 @@ class ReferenceArchitectureTests(unittest.TestCase):
         self.assertEqual(restored_env.read_text(), "EDITORIAL_PASSWORD=ACL\n")
         with sqlite3.connect(restored_usage / "usage-2026-W36.sqlite") as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0], 1)
+        with sqlite3.connect(restored_usage / "usage-legacy.sqlite") as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0], 1)
         self.assertEqual(
             (restored_usage / "events-2026-W36.tsv").read_text(encoding="utf-8"),
             "2026-09-03T10:15:22Z\tsessao\t1\tpage_view\n",
@@ -292,6 +313,7 @@ class ReferenceArchitectureTests(unittest.TestCase):
         daily_logs = service.sync_if_changed(actor="sistema.backup.logs")
         self.assertFalse(daily_logs.get("skipped", False))
         self.assertEqual(daily_logs["usage_backup_date"], synced["usage_backup_date"])
+        self.assertEqual(weekly_archive.read_bytes(), weekly_archive_bytes)
 
     def test_integrity_failure_identifies_the_changed_file(self):
         import_xml(self.source, self.db)

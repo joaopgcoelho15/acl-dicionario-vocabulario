@@ -54,13 +54,16 @@ O snapshot `current/` contém:
 
 - `editorial.sqlite.xz`: entradas, contas, papéis, workflow, listas,
   revisões e auditoria;
-- `usage-logs.tar.xz`: SQLite semanais dos pedidos HTTP e TSV semanais das
-  interações da UI, quando existem;
+- `usage-logs/AAAA-Wnn.tar.xz`: um arquivo independente por semana, contendo
+  o SQLite dos pedidos HTTP e o TSV das interações da UI dessa semana;
+- `usage-logs/legacy.sqlite.xz`: histórico anterior à rotação semanal;
 - `active-release.tar.xz`: release pública ativa completa, incluindo imagens;
 - `runtime.env`: configuração necessária para arrancar os serviços;
 - `manifest.json`: checksums, tamanhos, data, responsável e release ativa.
 
-Os `.xz` são guardados com Git LFS. Se o push falhar, a publicação continua
+Os arquivos de semanas já encerradas são reutilizados quando os checksums dos
+ficheiros de origem não mudaram; por isso, normalmente apenas a semana atual é
+atualizada. Os `.xz` são guardados com Git LFS. Se o push falhar, a publicação continua
 ativa e a interface mostra **Sincronização GitHub pendente**. O aprovador pode
 repetir a operação sem voltar a publicar.
 

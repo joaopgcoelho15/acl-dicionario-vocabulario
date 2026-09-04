@@ -75,7 +75,9 @@ edição, revisão, aprovação ou rollback ao respetivo interveniente.
   o serviço cria um SQLite por semana ISO (`usage-AAAA-Wnn.sqlite`) e, na
   primeira execução, copia automaticamente o antigo `var/usage.sqlite` para
   `var/usage-logs/usage-legacy.sqlite`; as interações da UI e as respostas
-  correspondentes são guardadas em `events-AAAA-Wnn.tsv`;
+  correspondentes são guardadas em `events-AAAA-Wnn.tsv`; no repositório
+  privado, cada semana é salvaguardada separadamente em
+  `current/usage-logs/AAAA-Wnn.tar.xz`;
 - manter a PoC na porta 5058 durante a validação inicial;
 - para rollback imediato do serviço, repor no Nginx o upstream da porta 5058;
 - para rollback de dados na nova arquitetura, usar a operação editorial de

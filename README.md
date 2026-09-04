@@ -126,8 +126,10 @@ ts session seq event ip ua resource status ms query results shown filter filters
 
 O endpoint recetor completa o IP e o user-agent observados pelo servidor. Os
 ficheiros rodam semanalmente, são escritos em segundo plano e entram no backup
-diário do repositório privado de dados. `/health` permanece excluído do log de
-pedidos HTTP.
+diário do repositório privado de dados. No snapshot, cada semana fica num
+arquivo independente `current/usage-logs/AAAA-Wnn.tar.xz`; semanas encerradas
+são reutilizadas sem voltar a ser comprimidas quando o seu conteúdo não mudou.
+`/health` permanece excluído do log de pedidos HTTP.
 
 ## Requisitos
 

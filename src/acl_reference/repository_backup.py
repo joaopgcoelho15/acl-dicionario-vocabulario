@@ -6,6 +6,7 @@ import json
 import lzma
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -16,6 +17,11 @@ import threading
 
 class RepositoryBackupError(RuntimeError):
     pass
+
+
+_WEEKLY_USAGE_FILE = re.compile(
+    r"^(?:usage|events)-(\d{4}-W\d{2})\.(?:sqlite|tsv)$"
+)
 
 
 class RepositoryBackupService:
@@ -254,27 +260,32 @@ class RepositoryBackupService:
         if available:
             _run_git(repository, "lfs", "install", "--local")
             _run_git(repository, "lfs", "track", "current/*.xz")
+            _run_git(
+                repository, "lfs", "track", "current/usage-logs/*.xz"
+            )
 
     def _build_snapshot(self, repository: Path, release_id: str, actor: str) -> dict:
         temporary = Path(tempfile.mkdtemp(prefix=".acl-snapshot-", dir=repository))
         current = temporary / "current"
         current.mkdir()
         try:
+            previous_manifest = _read_manifest(
+                repository / "current" / "manifest.json"
+            )
             sqlite_copy = temporary / "editorial.sqlite"
             _sqlite_backup(self.db_path, sqlite_copy)
             _compress(sqlite_copy, current / "editorial.sqlite.xz")
             sqlite_copy.unlink()
 
+            usage_manifest = {}
             if self.usage_db and self.usage_db.is_dir():
-                usage_copies = temporary / "usage-logs"
-                usage_copies.mkdir()
-                for source in sorted(self.usage_db.glob("usage-*.sqlite")):
-                    _sqlite_backup(source, usage_copies / source.name)
-                for source in sorted(self.usage_db.glob("events-*.tsv")):
-                    shutil.copy2(source, usage_copies / source.name)
-                if any(usage_copies.iterdir()):
-                    with tarfile.open(current / "usage-logs.tar.xz", "w:xz") as archive:
-                        archive.add(usage_copies, arcname="usage-logs")
+                usage_manifest = _build_weekly_usage_archives(
+                    self.usage_db,
+                    current / "usage-logs",
+                    previous_root=repository / "current" / "usage-logs",
+                    previous_manifest=previous_manifest.get("usage_logs", {}),
+                    work_root=temporary,
+                )
             elif self.usage_db and self.usage_db.is_file():
                 # Compatibilidade com snapshots anteriores à rotação semanal.
                 usage_copy = temporary / "usage.sqlite"
@@ -289,18 +300,21 @@ class RepositoryBackupService:
                 shutil.copy2(self.runtime_env, current / "runtime.env")
 
             files = {}
-            for path in sorted(current.iterdir()):
-                files[path.name] = {
+            for path in sorted(
+                item for item in current.rglob("*") if item.is_file()
+            ):
+                files[path.relative_to(current).as_posix()] = {
                     "bytes": path.stat().st_size,
                     "sha256": _sha256(path),
                 }
             manifest = {
                 "format": "acl-editorial-backup",
-                "format_version": 1,
+                "format_version": 2,
                 "created_at": _now(),
                 "actor": actor,
                 "active_release": release_id,
                 "files": files,
+                "usage_logs": usage_manifest,
                 "restore": {
                     "software_repository": "joaopgcoelho15/acl-dicionario-vocabulario",
                     "data_repository": "joaopgcoelho15/acl-dicionario-vocabulario-dados",
@@ -420,7 +434,41 @@ def restore_repository_snapshot(
         _safe_extract(archive, releases)
     (releases / "ACTIVE_RELEASE").write_text(release_id + "\n", encoding="utf-8")
 
-    if usage_db and (current / "usage-logs.tar.xz").is_file():
+    if usage_db and (current / "usage-logs").is_dir():
+        usage_target = Path(usage_db)
+        usage_target.parent.mkdir(parents=True, exist_ok=True)
+        if usage_target.is_dir():
+            shutil.copytree(usage_target, backup_root / usage_target.name)
+        elif usage_target.is_file():
+            shutil.copy2(usage_target, backup_root / usage_target.name)
+        temporary_usage = Path(
+            tempfile.mkdtemp(prefix=".usage-restore-", dir=usage_target.parent)
+        )
+        restored_usage = temporary_usage / "usage-logs"
+        restored_usage.mkdir()
+        try:
+            for source in sorted((current / "usage-logs").glob("*.tar.xz")):
+                extracted = temporary_usage / f"extract-{source.name[:-7]}"
+                extracted.mkdir()
+                with tarfile.open(source, "r:xz") as archive:
+                    _safe_extract(archive, extracted)
+                for item in extracted.rglob("*"):
+                    if item.is_file() and item.suffix in {".sqlite", ".tsv"}:
+                        shutil.copy2(item, restored_usage / item.name)
+            legacy = current / "usage-logs" / "legacy.sqlite.xz"
+            if legacy.is_file():
+                _decompress_atomic(
+                    legacy, restored_usage / "usage-legacy.sqlite"
+                )
+            if usage_target.is_dir():
+                shutil.rmtree(usage_target)
+            elif usage_target.exists():
+                usage_target.unlink()
+            os.replace(restored_usage, usage_target)
+        finally:
+            shutil.rmtree(temporary_usage, ignore_errors=True)
+    elif usage_db and (current / "usage-logs.tar.xz").is_file():
+        # Compatibilidade com o primeiro formato de diretório agregado.
         usage_target = Path(usage_db)
         usage_target.parent.mkdir(parents=True, exist_ok=True)
         if usage_target.is_dir():
@@ -456,6 +504,87 @@ def restore_repository_snapshot(
 def _active_release(releases_root: Path) -> str | None:
     pointer = releases_root / "ACTIVE_RELEASE"
     return pointer.read_text(encoding="utf-8").strip() if pointer.is_file() else None
+
+
+def _read_manifest(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _build_weekly_usage_archives(
+    source_root: Path,
+    target_root: Path,
+    *,
+    previous_root: Path,
+    previous_manifest: dict,
+    work_root: Path,
+) -> dict:
+    groups: dict[str, list[Path]] = {}
+    for source in sorted(source_root.iterdir()):
+        match = _WEEKLY_USAGE_FILE.match(source.name)
+        if source.is_file() and match:
+            groups.setdefault(match.group(1), []).append(source)
+
+    result: dict[str, dict] = {}
+    if groups or (source_root / "usage-legacy.sqlite").is_file():
+        target_root.mkdir(parents=True, exist_ok=True)
+
+    for week, sources in sorted(groups.items()):
+        copies = work_root / f"usage-{week}"
+        copies.mkdir()
+        source_files = {}
+        for source in sources:
+            destination = copies / source.name
+            if source.suffix == ".sqlite":
+                _sqlite_backup(source, destination)
+            else:
+                shutil.copy2(source, destination)
+            source_files[source.name] = {
+                "bytes": destination.stat().st_size,
+                "sha256": _sha256(destination),
+            }
+
+        archive_name = f"{week}.tar.xz"
+        target = target_root / archive_name
+        previous = previous_manifest.get(week, {})
+        reusable = previous_root / archive_name
+        if previous.get("files") == source_files and reusable.is_file():
+            shutil.copy2(reusable, target)
+        else:
+            with tarfile.open(target, "w:xz") as archive:
+                archive.add(copies, arcname=week)
+        result[week] = {
+            "archive": f"usage-logs/{archive_name}",
+            "files": source_files,
+        }
+
+    legacy_source = source_root / "usage-legacy.sqlite"
+    if legacy_source.is_file():
+        legacy_copy = work_root / "usage-legacy.sqlite"
+        _sqlite_backup(legacy_source, legacy_copy)
+        legacy_files = {
+            legacy_source.name: {
+                "bytes": legacy_copy.stat().st_size,
+                "sha256": _sha256(legacy_copy),
+            }
+        }
+        target = target_root / "legacy.sqlite.xz"
+        previous = previous_manifest.get("legacy", {})
+        reusable = previous_root / "legacy.sqlite.xz"
+        if previous.get("files") == legacy_files and reusable.is_file():
+            shutil.copy2(reusable, target)
+        else:
+            _compress(legacy_copy, target)
+        result["legacy"] = {
+            "archive": "usage-logs/legacy.sqlite.xz",
+            "files": legacy_files,
+        }
+    return result
 
 
 def _today() -> str:
