@@ -4,6 +4,24 @@ Plataforma de gestão, validação, publicação e pesquisa do Dicionário da
 Língua Portuguesa e do Vocabulário Ortográfico da Academia das Ciências de
 Lisboa.
 
+## Retomar o trabalho noutra conta ou sistema de IA
+
+Este repositório é o ponto de entrada do projeto ILLLP. Para perceber o objetivo,
+as decisões e os ficheiros a alterar, ler [ILLLP.md](ILLLP.md) e depois
+[genai.md](genai.md). [AGENTS.md](AGENTS.md) encaminha agentes que procuram
+instruções automaticamente. Estes documentos não dependem do histórico de chats.
+
+O código pode ser desenvolvido a partir deste clone e da fixture sintética
+`tests/fixtures/sample.xml`. Para recuperar o corpus real, imagens, trabalho
+editorial e configuração, é também necessário acesso ao repositório privado
+[acl-dicionario-vocabulario-dados](https://github.com/joaopgcoelho15/acl-dicionario-vocabulario-dados)
+e aos respetivos objetos Git LFS. Uma conta nova precisa de receber esse acesso;
+mudar de fornecedor de IA não o concede automaticamente. Seguir **Instalar ou
+restaurar um servidor** abaixo para o restauro operacional.
+
+Verificações efetuadas a partir de clones novos:
+[registo de portabilidade de 23/10/2026](docs/PORTABILIDADE_2026-10-23.md).
+
 O sistema tem duas aplicações:
 
 - **aplicação editorial**, onde se editam, validam e publicam entradas;
